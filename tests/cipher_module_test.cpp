@@ -173,6 +173,40 @@ bool check_module(const std::string& library_path) {
         return false;
     }
 
+    std::vector<std::uint8_t> malformed_public_key = public_key;
+    std::fill(malformed_public_key.begin(), malformed_public_key.end(), 0);
+    ModuleBuffer valid_ciphertext{api};
+    std::size_t valid_ciphertext_size = 0;
+    if (api->encrypt(public_key.data(), public_key.size(),
+                     binary_data.data(), binary_data.size(),
+                     &valid_ciphertext.data, &valid_ciphertext_size) == 0) {
+        std::cerr << "Не удалось создать данные для проверки ключа: "
+                  << module.name() << '\n';
+        return false;
+    }
+    ModuleBuffer malformed_public_result{api};
+    std::size_t malformed_public_result_size = 0;
+    if (api->encrypt(malformed_public_key.data(), malformed_public_key.size(),
+                     binary_data.data(), binary_data.size(),
+                     &malformed_public_result.data,
+                     &malformed_public_result_size) != 0) {
+        std::cerr << "Модуль принял повреждённый ключ шифрования: "
+                  << module.name() << '\n';
+        return false;
+    }
+    std::vector<std::uint8_t> malformed_private_key = private_key;
+    std::fill(malformed_private_key.begin(), malformed_private_key.end(), 0);
+    ModuleBuffer malformed_private_result{api};
+    std::size_t malformed_private_result_size = 0;
+    if (api->decrypt(malformed_private_key.data(), malformed_private_key.size(),
+                     valid_ciphertext.data, valid_ciphertext_size,
+                     &malformed_private_result.data,
+                     &malformed_private_result_size) != 0) {
+        std::cerr << "Модуль принял повреждённый ключ расшифрования: "
+                  << module.name() << '\n';
+        return false;
+    }
+
     if (std::string(module.name()).find("Хилл") != std::string::npos) {
         const std::vector<std::uint8_t> non_invertible_key{2, 0, 0, 2};
         ModuleBuffer non_invertible_result{api};
@@ -185,12 +219,7 @@ bool check_module(const std::string& library_path) {
             return false;
         }
 
-        ModuleBuffer valid_ciphertext{api};
-        std::size_t valid_ciphertext_size = 0;
-        if (api->encrypt(public_key.data(), public_key.size(),
-                         binary_data.data(), binary_data.size(),
-                         &valid_ciphertext.data, &valid_ciphertext_size) == 0 ||
-            api->decrypt(non_invertible_key.data(), non_invertible_key.size(),
+        if (api->decrypt(non_invertible_key.data(), non_invertible_key.size(),
                          valid_ciphertext.data, valid_ciphertext_size,
                          &non_invertible_result.data,
                          &non_invertible_result_size) != 0) {

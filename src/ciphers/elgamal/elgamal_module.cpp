@@ -105,8 +105,16 @@ bool parse_key(const std::uint8_t* key,
         BN_is_zero(third.get())) {
         return false;
     }
-    if (BN_num_bits(p.get()) != 2048 || BN_cmp(g.get(), p.get()) >= 0 ||
-        BN_cmp(third.get(), p.get()) >= 0) {
+    if (BN_num_bits(p.get()) != 2048 ||
+        BN_cmp(g.get(), BN_value_one()) <= 0 ||
+        (magic == kPublicKeyMagic && BN_is_one(third.get()))) {
+        return false;
+    }
+    BnPtr p_minus_one = make_bn();
+    if (!p_minus_one || BN_copy(p_minus_one.get(), p.get()) == nullptr ||
+        BN_sub_word(p_minus_one.get(), 1) != 1 ||
+        BN_cmp(g.get(), p_minus_one.get()) >= 0 ||
+        BN_cmp(third.get(), p_minus_one.get()) >= 0) {
         return false;
     }
     return true;
