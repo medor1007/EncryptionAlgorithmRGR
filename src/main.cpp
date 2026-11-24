@@ -23,6 +23,7 @@ enum class Cipher {
     ElGamal,
 };
 
+// Ввод команд и путей.
 int read_choice(int minimum, int maximum) {
     while (true) {
         std::cout << "Выберите пункт: ";
@@ -55,6 +56,7 @@ std::string prompt_path(const std::string& message, const std::string& default_p
     return path;
 }
 
+// Чтение и безопасная запись файлов.
 bool read_file(const std::string& path, std::vector<std::uint8_t>& data) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -197,6 +199,7 @@ bool prepare_output_file(const std::string& output_path) {
     return true;
 }
 
+// Преобразование данных для текстового представления.
 std::string bytes_to_hex(const std::uint8_t* data, std::size_t size) {
     static constexpr char digits[] = "0123456789ABCDEF";
     std::string result;
@@ -251,6 +254,7 @@ bool load_key(const std::string& path, std::vector<std::uint8_t>& key) {
     return true;
 }
 
+// Создание и загрузка ключей алгоритма.
 bool save_generated_key(const std::filesystem::path& path,
                         const std::uint8_t* key,
                         std::size_t key_size) {
@@ -334,6 +338,7 @@ bool prepare_keys(const CipherModule& module, const std::string& key_prefix) {
     return generate_keys(module, key_prefix);
 }
 
+// Шифрование и расшифрование текста.
 void encrypt_text(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
@@ -391,6 +396,7 @@ void decrypt_text(const CipherModule& module, const std::string& key_path) {
     api->free_buffer(output);
 }
 
+// Шифрование и расшифрование файлов.
 void encrypt_file(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
@@ -487,6 +493,7 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
     std::cout << "Готово. Расшифрованный текст записан в «" << output_path << "».\n";
 }
 
+// Выбор и загрузка динамической библиотеки.
 std::filesystem::path module_path(Cipher cipher, const char* executable_path) {
     std::filesystem::path executable(executable_path);
     std::filesystem::path directory = executable.has_parent_path()
@@ -506,6 +513,7 @@ std::string key_prefix(Cipher cipher) {
     return cipher == Cipher::Hill ? "keys/hill" : "keys/elgamal";
 }
 
+// Меню выбранного алгоритма.
 void show_cipher_menu(Cipher cipher, const char* executable_path) {
     const auto path = module_path(cipher, executable_path);
     CipherModule module;
@@ -577,6 +585,7 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
 
 }  // Анонимное пространство имён.
 
+// Главное меню приложения.
 int main(int argc, char* argv[]) {
     if (!authenticate_user()) {
         std::cout << "Доступ к программе закрыт.\n";

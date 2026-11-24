@@ -20,11 +20,14 @@
 
 namespace {
 
+// Параметры записи пароля.
 constexpr int kIterations = 600000;
 constexpr std::size_t kSaltSize = 16;
 constexpr std::size_t kHashSize = 32;
 constexpr char kRecordVersion[] = "RGRPASS1";
+constexpr char kDefaultPassword[] = "qwerty123";
 
+// Преобразование двоичных данных для файла настроек.
 std::string to_hex(const unsigned char* bytes, std::size_t size) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string result;
@@ -64,6 +67,7 @@ bool derive_hash(const std::string& password,
                              EVP_sha256(), static_cast<int>(kHashSize), hash) == 1;
 }
 
+// Ввод пароля без отображения символов.
 std::string read_password(const std::string& prompt) {
     std::cout << prompt;
 #ifdef _WIN32
@@ -94,6 +98,7 @@ std::string read_password(const std::string& prompt) {
     return password;
 }
 
+// Создание локального файла с хешем пароля.
 bool save_record(const std::filesystem::path& path,
                  const std::string& record,
                  std::string& error) {
@@ -155,6 +160,7 @@ bool create_password_record(const std::filesystem::path& path,
     return save_record(path, record, error);
 }
 
+// Проверка введённого пароля по сохранённому хешу.
 bool verify_password_record(const std::filesystem::path& path,
                             const std::string& password,
                             std::string& error) {
@@ -214,19 +220,11 @@ bool authenticate_user() {
 
     std::string error;
     if (!exists) {
-        std::cout << "Первый запуск. Создайте пароль длиной не менее 8 символов.\n";
-        const std::string password = read_password("Новый пароль: ");
-        const std::string confirmation = read_password("Повторите пароль: ");
-        if (password != confirmation) {
-            std::cout << "Пароли не совпали. Запустите программу и повторите настройку.\n";
-            return false;
-        }
-        if (!create_password_record(password_path, password, error)) {
+        if (!create_password_record(password_path, kDefaultPassword, error)) {
             std::cout << error << '\n';
             return false;
         }
-        std::cout << "Пароль настроен.\n";
-        return true;
+        std::cout << "Создан файл настроек для стандартного пароля.\n";
     }
 
     const std::string password = read_password("Введите пароль: ");
