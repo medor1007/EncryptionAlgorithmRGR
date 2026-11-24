@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -59,6 +60,37 @@ bool check_round_trip(const CipherModuleApi* api,
          !std::equal(plaintext.begin(), plaintext.end(), decrypted.data))) {
         std::cerr << "После расшифрования данные отличаются: " << case_name << '\n';
         return false;
+    }
+
+    constexpr std::size_t legacy_header_size = 12;
+    constexpr std::size_t current_header_size = 44;
+    const bool is_hill = encrypted_size >= current_header_size &&
+                         std::memcmp(encrypted.data, "HIL2", 4) == 0;
+    const bool is_elgamal = encrypted_size >= current_header_size &&
+                            std::memcmp(encrypted.data, "ELG2", 4) == 0;
+    if (is_hill || is_elgamal) {
+        std::vector<std::uint8_t> legacy_ciphertext;
+        legacy_ciphertext.reserve(legacy_header_size + encrypted_size - current_header_size);
+        const char* legacy_magic = is_hill ? "HIL1" : "ELG1";
+        legacy_ciphertext.insert(legacy_ciphertext.end(), legacy_magic, legacy_magic + 4);
+        legacy_ciphertext.insert(legacy_ciphertext.end(), encrypted.data + 4,
+                                 encrypted.data + legacy_header_size);
+        legacy_ciphertext.insert(legacy_ciphertext.end(),
+                                 encrypted.data + current_header_size,
+                                 encrypted.data + encrypted_size);
+
+        ModuleBuffer legacy_decrypted{api};
+        std::size_t legacy_decrypted_size = 0;
+        if (api->decrypt(decryption_key.data(), decryption_key.size(),
+                         legacy_ciphertext.data(), legacy_ciphertext.size(),
+                         &legacy_decrypted.data, &legacy_decrypted_size) == 0 ||
+            legacy_decrypted_size != plaintext.size() ||
+            (legacy_decrypted_size != 0 &&
+             !std::equal(plaintext.begin(), plaintext.end(), legacy_decrypted.data))) {
+            std::cerr << "Не удалось расшифровать контейнер старого формата: "
+                      << case_name << '\n';
+            return false;
+        }
     }
 
     std::vector<std::uint8_t> modified_ciphertext(
