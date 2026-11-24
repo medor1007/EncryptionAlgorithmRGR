@@ -23,6 +23,20 @@ set_target_properties(cipher_hill PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
 )
 
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+
+add_library(cipher_elgamal SHARED
+    src/ciphers/elgamal/elgamal_module.cpp
+)
+
+target_include_directories(cipher_elgamal PRIVATE include)
+target_compile_definitions(cipher_elgamal PRIVATE CIPHER_MODULE_BUILD)
+target_link_libraries(cipher_elgamal PRIVATE OpenSSL::Crypto)
+set_target_properties(cipher_elgamal PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
+)
+
 target_include_directories(encryption_rgr PRIVATE
     include
     src
@@ -37,5 +51,9 @@ target_compile_options(encryption_rgr PRIVATE
 )
 
 target_compile_options(cipher_hill PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
+target_compile_options(cipher_elgamal PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
 )
