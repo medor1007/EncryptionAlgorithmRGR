@@ -139,6 +139,12 @@ int encrypt(const std::uint8_t* key,
         input_size > std::numeric_limits<std::uint64_t>::max()) {
         return 0;
     }
+    int determinant_inverse = 0;
+    if (!inverse_mod_256(static_cast<int>(key[0]) * key[3] -
+                         static_cast<int>(key[1]) * key[2],
+                         determinant_inverse)) {
+        return 0;
+    }
     *output = nullptr;
     *output_size = 0;
 
@@ -188,6 +194,12 @@ int decrypt(const std::uint8_t* key,
             std::size_t* output_size) {
     if (key == nullptr || key_size != kKeySize || input == nullptr ||
         input_size < kLegacyHeaderSize || output == nullptr || output_size == nullptr) {
+        return 0;
+    }
+    int determinant_inverse = 0;
+    if (!inverse_mod_256(static_cast<int>(key[0]) * key[3] -
+                         static_cast<int>(key[1]) * key[2],
+                         determinant_inverse)) {
         return 0;
     }
     *output = nullptr;

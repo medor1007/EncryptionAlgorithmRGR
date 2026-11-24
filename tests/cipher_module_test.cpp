@@ -173,6 +173,32 @@ bool check_module(const std::string& library_path) {
         return false;
     }
 
+    if (std::string(module.name()).find("Хилл") != std::string::npos) {
+        const std::vector<std::uint8_t> non_invertible_key{2, 0, 0, 2};
+        ModuleBuffer non_invertible_result{api};
+        std::size_t non_invertible_result_size = 0;
+        if (api->encrypt(non_invertible_key.data(), non_invertible_key.size(),
+                         binary_data.data(), binary_data.size(),
+                         &non_invertible_result.data,
+                         &non_invertible_result_size) != 0) {
+            std::cerr << "Шифр Хилла принял необратимую матрицу ключа.\n";
+            return false;
+        }
+
+        ModuleBuffer valid_ciphertext{api};
+        std::size_t valid_ciphertext_size = 0;
+        if (api->encrypt(public_key.data(), public_key.size(),
+                         binary_data.data(), binary_data.size(),
+                         &valid_ciphertext.data, &valid_ciphertext_size) == 0 ||
+            api->decrypt(non_invertible_key.data(), non_invertible_key.size(),
+                         valid_ciphertext.data, valid_ciphertext_size,
+                         &non_invertible_result.data,
+                         &non_invertible_result_size) != 0) {
+            std::cerr << "Шифр Хилла принял необратимую матрицу при расшифровании.\n";
+            return false;
+        }
+    }
+
     const std::vector<std::uint8_t> invalid_ciphertext{0x00, 0x01, 0x02};
     ModuleBuffer invalid_result{api};
     std::size_t invalid_result_size = 0;
