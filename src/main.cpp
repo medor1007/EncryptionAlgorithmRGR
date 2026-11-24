@@ -160,7 +160,7 @@ bool hex_to_bytes(const std::string& text, std::vector<std::uint8_t>& data) {
 bool load_key(const std::string& path, std::vector<std::uint8_t>& key) {
     if (!read_file(path, key) || key.empty()) {
         std::cout << "Не удалось прочитать ключ «" << path
-                  << R"(». Сначала выберите «Сгенерировать ключи».)" << '\n';
+                  << R"(». Проверьте путь к файлу ключа.)" << '\n';
         return false;
     }
     return true;
