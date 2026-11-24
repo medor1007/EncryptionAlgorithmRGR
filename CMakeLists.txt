@@ -12,6 +12,17 @@ add_executable(encryption_rgr
     src/core/cipher_module.cpp
 )
 
+add_library(cipher_hill SHARED
+    src/ciphers/hill/hill_module.cpp
+)
+
+target_include_directories(cipher_hill PRIVATE include)
+target_compile_definitions(cipher_hill PRIVATE CIPHER_MODULE_BUILD)
+set_target_properties(cipher_hill PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
+)
+
 target_include_directories(encryption_rgr PRIVATE
     include
     src
@@ -22,5 +33,9 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_compile_options(encryption_rgr PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
+target_compile_options(cipher_hill PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
 )
