@@ -52,8 +52,15 @@ bool check_round_trip(const CipherModuleApi* api,
 }
 
 bool check_module(const std::string& library_path) {
-    CipherModule module;
+    CipherModule absent_module;
     std::string error;
+    if (absent_module.load(library_path + ".missing", error)) {
+        std::cerr << "Загрузчик принял отсутствующую библиотеку.\n";
+        return false;
+    }
+
+    CipherModule module;
+    error.clear();
     if (!module.load(library_path, error)) {
         std::cerr << "Не удалось загрузить модуль «" << library_path << "»: "
                   << error << '\n';
@@ -87,9 +94,26 @@ bool check_module(const std::string& library_path) {
         return false;
     }
 
+    const std::vector<std::uint8_t> invalid_key{0x01, 0x02, 0x03};
+    ModuleBuffer invalid_encryption{api};
+    std::size_t invalid_encryption_size = 0;
+    if (api->encrypt(invalid_key.data(), invalid_key.size(),
+                     binary_data.data(), binary_data.size(),
+                     &invalid_encryption.data, &invalid_encryption_size) != 0) {
+        std::cerr << "Модуль принял ключ неверного формата: " << module.name() << '\n';
+        return false;
+    }
+
     const std::vector<std::uint8_t> invalid_ciphertext{0x00, 0x01, 0x02};
     ModuleBuffer invalid_result{api};
     std::size_t invalid_result_size = 0;
+    if (api->decrypt(invalid_key.data(), invalid_key.size(),
+                     invalid_ciphertext.data(), invalid_ciphertext.size(),
+                     &invalid_result.data, &invalid_result_size) != 0) {
+        std::cerr << "Модуль принял ключ дешифрования неверного формата: "
+                  << module.name() << '\n';
+        return false;
+    }
     if (api->decrypt(private_key.data(), private_key.size(),
                      invalid_ciphertext.data(), invalid_ciphertext.size(),
                      &invalid_result.data, &invalid_result_size) != 0) {
