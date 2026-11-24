@@ -7,5 +7,9 @@ cmake-build-*/
 *.a
 *.key
 *.bin
+config/access.dat
+config/access.dat.tmp
 Encryptfiles/
 Decryptfiles/
+
+*.tmp

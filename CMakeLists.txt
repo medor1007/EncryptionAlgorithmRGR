@@ -10,6 +10,7 @@ add_executable(encryption_rgr
     src/main.cpp
     src/core/dynamic_library.cpp
     src/core/cipher_module.cpp
+    src/core/password_auth.cpp
 )
 
 add_library(cipher_hill SHARED
@@ -24,6 +25,7 @@ set_target_properties(cipher_hill PROPERTIES
 )
 
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+target_link_libraries(encryption_rgr PRIVATE OpenSSL::Crypto)
 target_link_libraries(cipher_hill PRIVATE OpenSSL::Crypto)
 
 add_library(cipher_elgamal SHARED
@@ -83,4 +85,15 @@ if(BUILD_TESTING)
             $<TARGET_FILE:cipher_elgamal>
     )
     set_tests_properties(cipher_modules_round_trip PROPERTIES TIMEOUT 120)
+
+    add_executable(password_auth_test
+        tests/password_auth_test.cpp
+        src/core/password_auth.cpp
+    )
+    target_include_directories(password_auth_test PRIVATE src)
+    target_link_libraries(password_auth_test PRIVATE OpenSSL::Crypto)
+    target_compile_options(password_auth_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+    )
+    add_test(NAME password_authentication COMMAND password_auth_test)
 endif()

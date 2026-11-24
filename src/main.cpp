@@ -1,11 +1,20 @@
 #include "core/cipher_module.hpp"
+#include "core/password_auth.hpp"
 
 #include <filesystem>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#else
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -57,23 +66,41 @@ bool read_file(const std::string& path, std::vector<std::uint8_t>& data) {
 }
 
 bool write_file(const std::string& path, const std::uint8_t* data, std::size_t size) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
+    const std::filesystem::path destination(path);
+    const std::filesystem::path temporary = path + ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file) return false;
+        if (size != 0) {
+            file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+        }
+        file.flush();
+        if (!file.good()) {
+            file.close();
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            return false;
+        }
+    }
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), destination.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
         return false;
     }
-    if (size != 0) {
-        file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+#else
+    if (std::rename(temporary.c_str(), destination.c_str()) != 0) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
     }
-    return file.good();
+#endif
+    return true;
 }
 
 bool write_text_file(const std::string& path, const std::string& data) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        return false;
-    }
-    file.write(data.data(), static_cast<std::streamsize>(data.size()));
-    return file.good();
+    return write_file(path, reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
 }
 
 bool wait_for_enter(const std::string& instruction) {
@@ -109,6 +136,64 @@ bool prepare_output_directory(const std::string& output_path) {
                   << "»: " << error.message() << ".\n";
         return false;
     }
+    return true;
+}
+
+bool ask_yes_no(const std::string& question) {
+    while (true) {
+        std::cout << question << " [Д/н]: ";
+        std::string answer;
+        if (!std::getline(std::cin, answer)) return false;
+        if (answer.empty() || answer == "Д" || answer == "д" ||
+            answer == "Да" || answer == "да" || answer == "Y" || answer == "y") {
+            return true;
+        }
+        if (answer == "Н" || answer == "н" || answer == "Нет" || answer == "нет" ||
+            answer == "N" || answer == "n") {
+            return false;
+        }
+        std::cout << "Ответьте «Д» или «н».\n";
+    }
+}
+
+bool prepare_output_file(const std::string& output_path) {
+    std::error_code error;
+    const std::filesystem::path path(output_path);
+    const bool exists = std::filesystem::exists(path, error);
+    if (error) {
+        std::cout << "Не удалось проверить выходной путь «" << output_path
+                  << "»: " << error.message() << ".\n";
+        return false;
+    }
+    if (exists) {
+        const bool is_directory = std::filesystem::is_directory(path, error);
+        if (error) {
+            std::cout << "Не удалось проверить выходной путь «" << output_path
+                      << "»: " << error.message() << ".\n";
+            return false;
+        }
+        if (is_directory) {
+            std::cout << "Выходной путь указывает на папку, а не на файл.\n";
+            return false;
+        }
+    }
+    if (!exists) {
+        const auto parent = path.parent_path();
+        const bool parent_exists = parent.empty() || std::filesystem::exists(parent, error);
+        if (error) {
+            std::cout << "Не удалось проверить папку выходного файла: " << error.message() << ".\n";
+            return false;
+        }
+        std::string question = "Выходной файл «" + output_path + "» не существует. Создать его";
+        if (!parent_exists) question += " и необходимые папки";
+        question += "?";
+        if (!ask_yes_no(question)) {
+            std::cout << "Создание выходного файла отменено.\n";
+            return false;
+        }
+    }
+
+    if (!prepare_output_directory(output_path)) return false;
     return true;
 }
 
@@ -171,7 +256,14 @@ bool save_generated_key(const std::filesystem::path& path,
                         std::size_t key_size) {
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
-    return !error && write_file(path.string(), key, key_size);
+    if (error || !write_file(path.string(), key, key_size)) return false;
+#ifndef _WIN32
+    if (chmod(path.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        std::filesystem::remove(path, error);
+        return false;
+    }
+#endif
+    return true;
 }
 
 bool generate_keys(const CipherModule& module, const std::string& key_prefix) {
@@ -331,7 +423,7 @@ void encrypt_file(const CipherModule& module, const std::string& key_path) {
     }
 
     const std::string encoded = bytes_to_hex(ciphertext, ciphertext_size);
-    if (!prepare_output_directory(output_path)) {
+    if (!prepare_output_file(output_path)) {
         api->free_buffer(ciphertext);
         return;
     }
@@ -382,7 +474,7 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
         return;
     }
 
-    if (!prepare_output_directory(output_path)) {
+    if (!prepare_output_file(output_path)) {
         api->free_buffer(plaintext);
         return;
     }
@@ -486,6 +578,10 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
 }  // Анонимное пространство имён.
 
 int main(int argc, char* argv[]) {
+    if (!authenticate_user()) {
+        std::cout << "Доступ к программе закрыт.\n";
+        return 1;
+    }
     const char* executable_path = argc > 0 ? argv[0] : "encryption_rgr";
     while (true) {
         std::cout << "\nПрограмма-шифратор и дешифратор\n\n"
