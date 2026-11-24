@@ -323,6 +323,7 @@ void encrypt_file(const CipherModule& module, const std::string& key_path) {
 
     std::uint8_t* ciphertext = nullptr;
     std::size_t ciphertext_size = 0;
+    std::cout << "Выполняется шифрование файла.\n";
     if (api->encrypt(key.data(), key.size(), input.data(), input.size(),
                      &ciphertext, &ciphertext_size) == 0) {
         std::cout << "Не удалось зашифровать файл.\n";
@@ -374,6 +375,7 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
 
     std::uint8_t* plaintext = nullptr;
     std::size_t plaintext_size = 0;
+    std::cout << "Выполняется расшифрование файла.\n";
     if (api->decrypt(key.data(), key.size(), ciphertext.data(), ciphertext.size(),
                      &plaintext, &plaintext_size) == 0) {
         std::cout << "Не удалось расшифровать файл. Проверьте ключ и данные.\n";
