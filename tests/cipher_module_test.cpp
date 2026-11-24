@@ -24,7 +24,8 @@ bool check_round_trip(const CipherModuleApi* api,
                       const std::vector<std::uint8_t>& encryption_key,
                       const std::vector<std::uint8_t>& decryption_key,
                       const std::vector<std::uint8_t>& plaintext,
-                      const char* case_name) {
+                      const char* case_name,
+                      const std::vector<std::uint8_t>* wrong_decryption_key = nullptr) {
     ModuleBuffer encrypted{api};
     std::size_t encrypted_size = 0;
     if (api->encrypt(encryption_key.data(), encryption_key.size(),
@@ -32,6 +33,17 @@ bool check_round_trip(const CipherModuleApi* api,
                      &encrypted.data, &encrypted_size) == 0) {
         std::cerr << "Ошибка шифрования: " << case_name << '\n';
         return false;
+    }
+
+    if (wrong_decryption_key != nullptr) {
+        ModuleBuffer wrong_result{api};
+        std::size_t wrong_result_size = 0;
+        if (api->decrypt(wrong_decryption_key->data(), wrong_decryption_key->size(),
+                         encrypted.data, encrypted_size,
+                         &wrong_result.data, &wrong_result_size) != 0) {
+            std::cerr << "Модуль не обнаружил неверный ключ: " << case_name << '\n';
+            return false;
+        }
     }
 
     ModuleBuffer decrypted{api};
@@ -83,10 +95,27 @@ bool check_module(const std::string& library_path) {
         encryption_key.data, encryption_key.data + encryption_key_size);
     const std::vector<std::uint8_t> private_key(
         decryption_key.data, decryption_key.data + decryption_key_size);
+    ModuleBuffer other_public_key{api};
+    ModuleBuffer other_private_key{api};
+    std::size_t other_public_key_size = 0;
+    std::size_t other_private_key_size = 0;
+    const bool is_hill = std::string(module.name()).find("Хилл") != std::string::npos;
+    if (is_hill &&
+        api->generate_keys(nullptr, 0,
+                           &other_public_key.data, &other_public_key_size,
+                           &other_private_key.data, &other_private_key_size) == 0) {
+        std::cerr << "Не удалось создать дополнительный ключ Хилла для проверки.\n";
+        return false;
+    }
+    const std::vector<std::uint8_t> other_private_key_bytes = is_hill
+        ? std::vector<std::uint8_t>(other_private_key.data,
+                                    other_private_key.data + other_private_key_size)
+        : std::vector<std::uint8_t>{};
     const std::vector<std::uint8_t> binary_data{
         0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff, 0x00, 0xc3, 0xa9, 0x0a};
     if (!check_round_trip(api, public_key, private_key,
-                          binary_data, "двоичные данные")) {
+                          binary_data, "двоичные данные",
+                          is_hill ? &other_private_key_bytes : nullptr)) {
         return false;
     }
     if (!check_round_trip(api, public_key, private_key,

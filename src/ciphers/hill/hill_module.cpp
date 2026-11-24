@@ -1,5 +1,7 @@
 #include "cipher_module_api.h"
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -12,8 +14,11 @@
 namespace {
 
 constexpr std::size_t kKeySize = 4;
-constexpr std::size_t kHeaderSize = 12;
-constexpr std::array<std::uint8_t, 4> kMagic{'H', 'I', 'L', '1'};
+constexpr std::size_t kLegacyHeaderSize = 12;
+constexpr std::size_t kDigestSize = 32;
+constexpr std::size_t kHeaderSize = kLegacyHeaderSize + kDigestSize;
+constexpr std::array<std::uint8_t, 4> kLegacyMagic{'H', 'I', 'L', '1'};
+constexpr std::array<std::uint8_t, 4> kMagic{'H', 'I', 'L', '2'};
 
 int inverse_mod_256(int value, int& inverse) {
     value %= 256;
@@ -39,6 +44,16 @@ std::uint8_t mod_256(int value) {
         value += 256;
     }
     return static_cast<std::uint8_t>(value);
+}
+
+bool calculate_digest(const std::uint8_t* data,
+                      std::size_t size,
+                      std::array<std::uint8_t, kDigestSize>& digest) {
+    static const std::uint8_t empty_data = 0;
+    const std::uint8_t* source = size == 0 ? &empty_data : data;
+    unsigned int digest_size = 0;
+    return EVP_Digest(source, size, digest.data(), &digest_size,
+                      EVP_sha256(), nullptr) == 1 && digest_size == digest.size();
 }
 
 int allocate_copy(const std::uint8_t* data, std::size_t size, std::uint8_t** output) {
@@ -127,7 +142,11 @@ int encrypt(const std::uint8_t* key,
     *output = nullptr;
     *output_size = 0;
 
-    const std::size_t padded_size = input_size + (input_size % 2);
+    const std::size_t padding = input_size % 2;
+    if (input_size > std::numeric_limits<std::size_t>::max() - padding) {
+        return 0;
+    }
+    const std::size_t padded_size = input_size + padding;
     if (padded_size > std::numeric_limits<std::size_t>::max() - kHeaderSize) {
         return 0;
     }
@@ -142,6 +161,12 @@ int encrypt(const std::uint8_t* key,
     for (std::size_t i = 0; i < sizeof(original_size); ++i) {
         result[4 + i] = static_cast<std::uint8_t>((original_size >> (8 * i)) & 0xff);
     }
+    std::array<std::uint8_t, kDigestSize> digest{};
+    if (!calculate_digest(input, input_size, digest)) {
+        std::free(result);
+        return 0;
+    }
+    std::copy(digest.begin(), digest.end(), result + kLegacyHeaderSize);
 
     for (std::size_t offset = 0; offset < padded_size; offset += 2) {
         const int first = offset < input_size ? input[offset] : 0;
@@ -162,18 +187,26 @@ int decrypt(const std::uint8_t* key,
             std::uint8_t** output,
             std::size_t* output_size) {
     if (key == nullptr || key_size != kKeySize || input == nullptr ||
-        input_size < kHeaderSize || output == nullptr || output_size == nullptr ||
-        !std::equal(kMagic.begin(), kMagic.end(), input)) {
+        input_size < kLegacyHeaderSize || output == nullptr || output_size == nullptr) {
         return 0;
     }
     *output = nullptr;
     *output_size = 0;
 
+    const bool has_digest = std::equal(kMagic.begin(), kMagic.end(), input);
+    if (!has_digest && !std::equal(kLegacyMagic.begin(), kLegacyMagic.end(), input)) {
+        return 0;
+    }
+    const std::size_t header_size = has_digest ? kHeaderSize : kLegacyHeaderSize;
+    if (input_size < header_size) {
+        return 0;
+    }
+
     std::uint64_t original_size = 0;
     for (std::size_t i = 0; i < sizeof(original_size); ++i) {
         original_size |= static_cast<std::uint64_t>(input[4 + i]) << (8 * i);
     }
-    const std::size_t encrypted_size = input_size - kHeaderSize;
+    const std::size_t encrypted_size = input_size - header_size;
     if ((encrypted_size % 2) != 0 || original_size > encrypted_size ||
         encrypted_size - original_size > 1 ||
         original_size > std::numeric_limits<std::size_t>::max()) {
@@ -189,14 +222,23 @@ int decrypt(const std::uint8_t* key,
     }
 
     for (std::size_t offset = 0; offset < encrypted_size; offset += 2) {
-        const int first = input[kHeaderSize + offset];
-        const int second = input[kHeaderSize + offset + 1];
+        const int first = input[header_size + offset];
+        const int second = input[header_size + offset + 1];
         const std::size_t position = offset;
         if (position < plaintext_size) {
             plaintext[position] = mod_256(first * key[0] + second * key[2]);
         }
         if (position + 1 < plaintext_size) {
             plaintext[position + 1] = mod_256(first * key[1] + second * key[3]);
+        }
+    }
+
+    if (has_digest) {
+        std::array<std::uint8_t, kDigestSize> digest{};
+        if (!calculate_digest(plaintext, plaintext_size, digest) ||
+            !std::equal(digest.begin(), digest.end(), input + kLegacyHeaderSize)) {
+            std::free(plaintext);
+            return 0;
         }
     }
 

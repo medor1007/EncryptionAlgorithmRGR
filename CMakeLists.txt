@@ -24,6 +24,7 @@ set_target_properties(cipher_hill PROPERTIES
 )
 
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+target_link_libraries(cipher_hill PRIVATE OpenSSL::Crypto)
 
 add_library(cipher_elgamal SHARED
     src/ciphers/elgamal/elgamal_module.cpp
