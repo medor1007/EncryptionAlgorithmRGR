@@ -37,15 +37,6 @@ int read_choice(int minimum, int maximum) {
     }
 }
 
-std::string prompt_path(const std::string& message, const std::string& default_path) {
-    std::cout << message << " [" << default_path << "]: ";
-    std::string path;
-    if (!std::getline(std::cin, path) || path.empty()) {
-        return default_path;
-    }
-    return path;
-}
-
 bool read_file(const std::string& path, std::vector<std::uint8_t>& data) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -74,6 +65,12 @@ bool write_text_file(const std::string& path, const std::string& data) {
     }
     file.write(data.data(), static_cast<std::streamsize>(data.size()));
     return file.good();
+}
+
+bool wait_for_enter(const std::string& instruction) {
+    std::cout << instruction << " Нажмите Enter, когда будете готовы: ";
+    std::string line;
+    return static_cast<bool>(std::getline(std::cin, line));
 }
 
 std::string bytes_to_hex(const std::uint8_t* data, std::size_t size) {
@@ -271,10 +268,11 @@ void encrypt_file(const CipherModule& module, const std::string& key_path) {
         return;
     }
 
-    const std::string input_path = prompt_path("Файл с исходными данными", "input.txt");
-    const std::string output_path = prompt_path("Файл для результата", "encrypted.txt");
-    if (!read_file(input_path, input)) {
-        std::cout << "Не удалось прочитать файл «" << input_path << "».\n";
+    if (!wait_for_enter("Запишите исходный текст в файл input.txt и сохраните его.")) {
+        return;
+    }
+    if (!read_file("input.txt", input)) {
+        std::cout << "Не удалось прочитать файл input.txt.\n";
         return;
     }
 
@@ -287,13 +285,13 @@ void encrypt_file(const CipherModule& module, const std::string& key_path) {
     }
 
     const std::string encoded = bytes_to_hex(ciphertext, ciphertext_size);
-    const bool saved = write_text_file(output_path, encoded);
+    const bool saved = write_text_file("encrypted.txt", encoded);
     api->free_buffer(ciphertext);
     if (!saved) {
-        std::cout << "Не удалось записать файл «" << output_path << "».\n";
+        std::cout << "Не удалось записать файл encrypted.txt.\n";
         return;
     }
-    std::cout << "Результат сохранён в «" << output_path << "».\n";
+    std::cout << "Готово. Зашифрованный текст записан в encrypted.txt.\n";
 }
 
 void decrypt_file(const CipherModule& module, const std::string& key_path) {
@@ -304,10 +302,11 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
         return;
     }
 
-    const std::string input_path = prompt_path("Файл с зашифрованными данными", "encrypted.txt");
-    const std::string output_path = prompt_path("Файл для расшифрованного результата", "decrypted.txt");
-    if (!read_file(input_path, encoded)) {
-        std::cout << "Не удалось прочитать файл «" << input_path << "».\n";
+    if (!wait_for_enter("Скопируйте шифротекст в файл encrypted.txt и сохраните его.")) {
+        return;
+    }
+    if (!read_file("encrypted.txt", encoded)) {
+        std::cout << "Не удалось прочитать файл encrypted.txt.\n";
         return;
     }
 
@@ -326,13 +325,13 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
         return;
     }
 
-    const bool saved = write_file(output_path, plaintext, plaintext_size);
+    const bool saved = write_file("decrypted.txt", plaintext, plaintext_size);
     api->free_buffer(plaintext);
     if (!saved) {
-        std::cout << "Не удалось записать файл «" << output_path << "».\n";
+        std::cout << "Не удалось записать файл decrypted.txt.\n";
         return;
     }
-    std::cout << "Расшифрованный результат сохранён в «" << output_path << "».\n";
+    std::cout << "Готово. Расшифрованный текст записан в decrypted.txt.\n";
 }
 
 std::filesystem::path module_path(Cipher cipher, const char* executable_path) {
