@@ -168,6 +168,44 @@ bool generate_keys(const CipherModule& module, const std::string& key_prefix) {
     return true;
 }
 
+bool prepare_keys(const CipherModule& module, const std::string& key_prefix) {
+    const std::filesystem::path encryption_path = key_prefix + "_encryption.key";
+    const std::filesystem::path decryption_path = key_prefix + "_decryption.key";
+    std::error_code error;
+    std::filesystem::create_directories(encryption_path.parent_path(), error);
+    if (error) {
+        std::cout << "Не удалось создать каталог для ключей.\n";
+        return false;
+    }
+    const auto key_exists = [&error](const std::filesystem::path& path, bool& exists) {
+        error.clear();
+        exists = std::filesystem::is_regular_file(path, error);
+        if (error == std::errc::no_such_file_or_directory) {
+            error.clear();
+            exists = false;
+        }
+        return !error;
+    };
+    bool encryption_exists = false;
+    bool decryption_exists = false;
+    if (!key_exists(encryption_path, encryption_exists) ||
+        !key_exists(decryption_path, decryption_exists)) {
+        std::cout << "Не удалось проверить файлы ключей.\n";
+        return false;
+    }
+    if (encryption_exists && decryption_exists) {
+        return true;
+    }
+
+    if (encryption_exists || decryption_exists) {
+        std::cout << "Обнаружен только один ключ из пары. Будет создана новая пара; "
+                     "старые зашифрованные данные могут перестать расшифровываться.\n";
+    } else {
+        std::cout << "Ключи ещё не созданы. Подготавливаю их автоматически.\n";
+    }
+    return generate_keys(module, key_prefix);
+}
+
 void encrypt_text(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
@@ -326,13 +364,18 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
     }
 
     const std::string prefix = key_prefix(cipher);
+    if (!prepare_keys(module, prefix)) {
+        return;
+    }
+
+    std::cout << "Ключи готовы. При первом запуске они создаются автоматически.\n";
     while (true) {
         std::cout << "\n=== " << module.name() << " ===\n"
                   << "1. Зашифровать текст из терминала\n"
                   << "2. Расшифровать текст из терминала\n"
                   << "3. Зашифровать файл\n"
                   << "4. Расшифровать файл\n"
-                  << "5. Сгенерировать ключи\n"
+                  << "5. Заменить ключи (старые шифротексты не подойдут)\n"
                   << "0. Назад\n";
 
         const int choice = read_choice(0, 5);
@@ -352,9 +395,16 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
             case 4:
                 decrypt_file(module, prefix + "_decryption.key");
                 break;
-            case 5:
-                generate_keys(module, prefix);
+            case 5: {
+                std::cout << "Введите ДА, чтобы создать новую пару ключей: ";
+                std::string confirmation;
+                if (std::getline(std::cin, confirmation) && confirmation == "ДА") {
+                    generate_keys(module, prefix);
+                } else {
+                    std::cout << "Ключи не изменены.\n";
+                }
                 break;
+            }
             default:
                 break;
         }
@@ -367,8 +417,8 @@ int main(int argc, char* argv[]) {
     const char* executable_path = argc > 0 ? argv[0] : "encryption_rgr";
     while (true) {
         std::cout << "\n========================================\n"
-                  << " Encryption Algorithm RGR\n"
-                  << " Учебное шифрование и дешифрование\n"
+                  << " Шифрование: Хилл и Эль-Гамаль\n"
+                  << " Учебное шифрование и расшифрование\n"
                   << "========================================\n"
                   << "1. Шифр Хилла\n"
                   << "2. Шифр Эль-Гамаля\n"
