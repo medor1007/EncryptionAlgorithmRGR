@@ -369,7 +369,7 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
 
     std::cout << "Ключи готовы. При первом запуске они создаются автоматически.\n";
     while (true) {
-        std::cout << "\n=== " << module.name() << " ===\n"
+        std::cout << "\n" << module.name() << "\n"
                   << "1. Зашифровать текст из терминала\n"
                   << "2. Расшифровать текст из терминала\n"
                   << "3. Зашифровать файл\n"
@@ -415,17 +415,13 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
 int main(int argc, char* argv[]) {
     const char* executable_path = argc > 0 ? argv[0] : "encryption_rgr";
     while (true) {
-        std::cout << "\n========================================\n"
-                  << " Шифрование: Хилл и Эль-Гамаль\n"
-                  << " Учебное шифрование и расшифрование\n"
-                  << "========================================\n"
+        std::cout << "\nПрограмма-шифратор и дешифратор\n\n"
                   << "1. Шифр Хилла\n"
                   << "2. Шифр Эль-Гамаля\n"
                   << "0. Выход\n";
 
         const int choice = read_choice(0, 2);
         if (choice == 0) {
-            std::cout << "До свидания!\n";
             return 0;
         }
         show_cipher_menu(choice == 1 ? Cipher::Hill : Cipher::ElGamal, executable_path);
