@@ -441,18 +441,30 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
             return;
         }
         switch (choice) {
-            case 1:
-                encrypt_text(module, prefix + "_encryption.key");
+            case 1: {
+                const std::string key_path = prompt_path(
+                    "Путь к файлу ключа шифрования", prefix + "_encryption.key");
+                encrypt_text(module, key_path);
                 break;
-            case 2:
-                decrypt_text(module, prefix + "_decryption.key");
+            }
+            case 2: {
+                const std::string key_path = prompt_path(
+                    "Путь к файлу ключа расшифрования", prefix + "_decryption.key");
+                decrypt_text(module, key_path);
                 break;
-            case 3:
-                encrypt_file(module, prefix + "_encryption.key");
+            }
+            case 3: {
+                const std::string key_path = prompt_path(
+                    "Путь к файлу ключа шифрования", prefix + "_encryption.key");
+                encrypt_file(module, key_path);
                 break;
-            case 4:
-                decrypt_file(module, prefix + "_decryption.key");
+            }
+            case 4: {
+                const std::string key_path = prompt_path(
+                    "Путь к файлу ключа расшифрования", prefix + "_decryption.key");
+                decrypt_file(module, key_path);
                 break;
+            }
             case 5: {
                 std::cout << "Введите ДА, чтобы создать новую пару ключей: ";
                 std::string confirmation;
