@@ -8,7 +8,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(encryption_rgr
     src/main.cpp
+    src/core/dynamic_library.cpp
+    src/core/cipher_module.cpp
 )
+
+target_include_directories(encryption_rgr PRIVATE
+    include
+    src
+)
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(encryption_rgr PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 target_compile_options(encryption_rgr PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
