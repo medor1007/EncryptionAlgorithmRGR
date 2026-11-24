@@ -68,7 +68,7 @@ bool write_text_file(const std::string& path, const std::string& data) {
 }
 
 bool wait_for_enter(const std::string& instruction) {
-    std::cout << instruction << " Нажмите Enter, когда будете готовы: ";
+    std::cout << instruction << '\n';
     std::string line;
     return static_cast<bool>(std::getline(std::cin, line));
 }
@@ -422,6 +422,7 @@ int main(int argc, char* argv[]) {
 
         const int choice = read_choice(0, 2);
         if (choice == 0) {
+            std::cout << "Вы вышли из программы.\n";
             return 0;
         }
         show_cipher_menu(choice == 1 ? Cipher::Hill : Cipher::ElGamal, executable_path);
