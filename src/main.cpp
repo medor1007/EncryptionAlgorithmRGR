@@ -484,6 +484,15 @@ int main(int argc, char* argv[]) {
             std::cout << "Вы вышли из программы.\n";
             return 0;
         }
-        show_cipher_menu(choice == 1 ? Cipher::Hill : Cipher::ElGamal, executable_path);
+        try {
+            show_cipher_menu(choice == 1 ? Cipher::Hill : Cipher::ElGamal,
+                             executable_path);
+        } catch (const std::exception& error) {
+            std::cout << "Операция прервана из-за ошибки: " << error.what()
+                      << ". Возврат в главное меню.\n";
+        } catch (...) {
+            std::cout << "Операция прервана из-за неизвестной ошибки. "
+                         "Возврат в главное меню.\n";
+        }
     }
 }

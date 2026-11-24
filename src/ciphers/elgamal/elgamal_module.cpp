@@ -116,12 +116,12 @@ std::uint64_t decode_length(const std::uint8_t* source) {
     return length;
 }
 
-int generate_keys(const std::uint8_t* parameters,
-                  std::size_t parameters_size,
-                  std::uint8_t** encryption_key,
-                  std::size_t* encryption_key_size,
-                  std::uint8_t** decryption_key,
-                  std::size_t* decryption_key_size) {
+int generate_keys_impl(const std::uint8_t* parameters,
+                       std::size_t parameters_size,
+                       std::uint8_t** encryption_key,
+                       std::size_t* encryption_key_size,
+                       std::uint8_t** decryption_key,
+                       std::size_t* decryption_key_size) {
     (void)parameters;
     if (parameters_size != 0 || encryption_key == nullptr ||
         encryption_key_size == nullptr || decryption_key == nullptr ||
@@ -196,12 +196,12 @@ int generate_keys(const std::uint8_t* parameters,
     return 1;
 }
 
-int encrypt(const std::uint8_t* key,
-            std::size_t key_size,
-            const std::uint8_t* input,
-            std::size_t input_size,
-            std::uint8_t** output,
-            std::size_t* output_size) {
+int encrypt_impl(const std::uint8_t* key,
+                 std::size_t key_size,
+                 const std::uint8_t* input,
+                 std::size_t input_size,
+                 std::uint8_t** output,
+                 std::size_t* output_size) {
     if (output == nullptr || output_size == nullptr ||
         (input == nullptr && input_size != 0) ||
         input_size > std::numeric_limits<std::uint64_t>::max()) {
@@ -273,12 +273,12 @@ int encrypt(const std::uint8_t* key,
     return 1;
 }
 
-int decrypt(const std::uint8_t* key,
-            std::size_t key_size,
-            const std::uint8_t* input,
-            std::size_t input_size,
-            std::uint8_t** output,
-            std::size_t* output_size) {
+int decrypt_impl(const std::uint8_t* key,
+                 std::size_t key_size,
+                 const std::uint8_t* input,
+                 std::size_t input_size,
+                 std::uint8_t** output,
+                 std::size_t* output_size) {
     if (key == nullptr || input == nullptr || input_size < kContainerHeaderBytes ||
         output == nullptr || output_size == nullptr ||
         !std::equal(kCiphertextMagic.begin(), kCiphertextMagic.end(), input)) {
@@ -355,11 +355,52 @@ int decrypt(const std::uint8_t* key,
     return 1;
 }
 
+int generate_keys(const std::uint8_t* parameters,
+                  std::size_t parameters_size,
+                  std::uint8_t** encryption_key,
+                  std::size_t* encryption_key_size,
+                  std::uint8_t** decryption_key,
+                  std::size_t* decryption_key_size) noexcept {
+    try {
+        return generate_keys_impl(parameters, parameters_size, encryption_key,
+                                  encryption_key_size, decryption_key,
+                                  decryption_key_size);
+    } catch (...) {
+        return 0;
+    }
+}
+
+int encrypt(const std::uint8_t* key,
+            std::size_t key_size,
+            const std::uint8_t* input,
+            std::size_t input_size,
+            std::uint8_t** output,
+            std::size_t* output_size) noexcept {
+    try {
+        return encrypt_impl(key, key_size, input, input_size, output, output_size);
+    } catch (...) {
+        return 0;
+    }
+}
+
+int decrypt(const std::uint8_t* key,
+            std::size_t key_size,
+            const std::uint8_t* input,
+            std::size_t input_size,
+            std::uint8_t** output,
+            std::size_t* output_size) noexcept {
+    try {
+        return decrypt_impl(key, key_size, input, input_size, output, output_size);
+    } catch (...) {
+        return 0;
+    }
+}
+
 const char* get_name() {
     return "Шифр Эль-Гамаля";
 }
 
-void free_buffer(std::uint8_t* buffer) {
+void free_buffer(std::uint8_t* buffer) noexcept {
     std::free(buffer);
 }
 
