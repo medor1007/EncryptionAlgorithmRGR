@@ -35,6 +35,12 @@ cmake --build build
 ./build/encryption_rgr
 ```
 
+Для автоматической проверки модулей выполни:
+
+```sh
+ctest --test-dir build --output-on-failure
+```
+
 Сборка создаёт главное приложение и отдельные динамические библиотеки шифров
 в каталоге `build/modules`.
 

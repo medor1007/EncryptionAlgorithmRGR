@@ -57,3 +57,29 @@ target_compile_options(cipher_hill PRIVATE
 target_compile_options(cipher_elgamal PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(cipher_module_test
+        tests/cipher_module_test.cpp
+        src/core/dynamic_library.cpp
+        src/core/cipher_module.cpp
+    )
+    target_include_directories(cipher_module_test PRIVATE
+        include
+        src
+    )
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(cipher_module_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    target_compile_options(cipher_module_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+    )
+    add_dependencies(cipher_module_test cipher_hill cipher_elgamal)
+    add_test(NAME cipher_modules_round_trip
+        COMMAND cipher_module_test
+            $<TARGET_FILE:cipher_hill>
+            $<TARGET_FILE:cipher_elgamal>
+    )
+    set_tests_properties(cipher_modules_round_trip PROPERTIES TIMEOUT 120)
+endif()
