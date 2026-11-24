@@ -134,40 +134,21 @@ int generate_keys_impl(const std::uint8_t* parameters,
     *decryption_key_size = 0;
 
     BnPtr p = make_bn();
-    BnPtr q = make_bn();
-    BnPtr p_minus_one = make_bn();
     BnPtr generator = make_bn();
-    BnPtr generator_squared = make_bn();
-    BnPtr generator_to_q = make_bn();
     BnPtr private_exponent = make_bn();
     BnPtr public_value = make_bn();
     BnPtr range = make_bn();
     BnContextPtr context = make_context();
-    if (!p || !q || !p_minus_one || !generator || !generator_squared ||
-        !generator_to_q || !private_exponent || !public_value || !range || !context) {
+    if (!p || !generator || !private_exponent || !public_value || !range || !context) {
         return 0;
     }
 
-    if (BN_generate_prime_ex(p.get(), static_cast<int>(kFieldBytes * 8), 1,
-                             nullptr, nullptr, nullptr) != 1 ||
-        BN_copy(p_minus_one.get(), p.get()) == nullptr ||
-        BN_sub_word(p_minus_one.get(), 1) != 1 ||
-        BN_rshift1(q.get(), p_minus_one.get()) != 1 ||
-        BN_copy(range.get(), p_minus_one.get()) == nullptr ||
-        BN_sub_word(range.get(), 2) != 1) {
+    // Стандартная группа RFC 3526: параметры фиксированы, закрытый ключ случаен.
+    if (BN_get_rfc3526_prime_2048(p.get()) == nullptr ||
+        BN_set_word(generator.get(), 2) != 1 ||
+        BN_copy(range.get(), p.get()) == nullptr ||
+        BN_sub_word(range.get(), 3) != 1) {
         return 0;
-    }
-
-    bool generator_ready = false;
-    while (!generator_ready) {
-        if (BN_rand_range(generator.get(), range.get()) != 1 ||
-            BN_add_word(generator.get(), 2) != 1 ||
-            BN_mod_sqr(generator_squared.get(), generator.get(), p.get(), context.get()) != 1 ||
-            BN_mod_exp(generator_to_q.get(), generator.get(), q.get(), p.get(), context.get()) != 1) {
-            return 0;
-        }
-        generator_ready = !BN_is_one(generator_squared.get()) &&
-                          !BN_is_one(generator_to_q.get());
     }
 
     if (BN_rand_range(private_exponent.get(), range.get()) != 1 ||
