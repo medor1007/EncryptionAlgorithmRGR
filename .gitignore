@@ -1,0 +1,11 @@
+build/
+cmake-build-*/
+*.so
+*.dll
+*.dylib
+*.o
+*.a
+*.key
+*.bin
+Encryptfiles/
+Decryptfiles/
