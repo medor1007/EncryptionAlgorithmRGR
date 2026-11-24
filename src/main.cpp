@@ -24,7 +24,7 @@ int read_choice(int minimum, int maximum) {
                 return choice;
             }
         } catch (const std::exception&) {
-            // Invalid input is handled by the common message below.
+            // Некорректный ввод обработается общим сообщением ниже.
         }
 
         std::cout << "Некорректный ввод. Введите число от " << minimum
@@ -54,7 +54,7 @@ void show_cipher_menu(Cipher cipher) {
     }
 }
 
-}  // namespace
+}  // Анонимное пространство имён.
 
 int main() {
     while (true) {
