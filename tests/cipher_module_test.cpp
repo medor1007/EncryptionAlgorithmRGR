@@ -60,6 +60,18 @@ bool check_round_trip(const CipherModuleApi* api,
         std::cerr << "После расшифрования данные отличаются: " << case_name << '\n';
         return false;
     }
+
+    std::vector<std::uint8_t> modified_ciphertext(
+        encrypted.data, encrypted.data + encrypted_size);
+    modified_ciphertext.back() ^= 0x01;
+    ModuleBuffer modified_result{api};
+    std::size_t modified_result_size = 0;
+    if (api->decrypt(decryption_key.data(), decryption_key.size(),
+                     modified_ciphertext.data(), modified_ciphertext.size(),
+                     &modified_result.data, &modified_result_size) != 0) {
+        std::cerr << "Модуль не обнаружил повреждение данных: " << case_name << '\n';
+        return false;
+    }
     return true;
 }
 
@@ -99,23 +111,19 @@ bool check_module(const std::string& library_path) {
     ModuleBuffer other_private_key{api};
     std::size_t other_public_key_size = 0;
     std::size_t other_private_key_size = 0;
-    const bool is_hill = std::string(module.name()).find("Хилл") != std::string::npos;
-    if (is_hill &&
-        api->generate_keys(nullptr, 0,
+    if (api->generate_keys(nullptr, 0,
                            &other_public_key.data, &other_public_key_size,
                            &other_private_key.data, &other_private_key_size) == 0) {
-        std::cerr << "Не удалось создать дополнительный ключ Хилла для проверки.\n";
+        std::cerr << "Не удалось создать дополнительную пару ключей для проверки.\n";
         return false;
     }
-    const std::vector<std::uint8_t> other_private_key_bytes = is_hill
-        ? std::vector<std::uint8_t>(other_private_key.data,
-                                    other_private_key.data + other_private_key_size)
-        : std::vector<std::uint8_t>{};
+    const std::vector<std::uint8_t> other_private_key_bytes(
+        other_private_key.data, other_private_key.data + other_private_key_size);
     const std::vector<std::uint8_t> binary_data{
         0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff, 0x00, 0xc3, 0xa9, 0x0a};
     if (!check_round_trip(api, public_key, private_key,
                           binary_data, "двоичные данные",
-                          is_hill ? &other_private_key_bytes : nullptr)) {
+                          &other_private_key_bytes)) {
         return false;
     }
     if (!check_round_trip(api, public_key, private_key,
