@@ -37,7 +37,6 @@ bool assign_value(int& index,
 
 }
 
-// Запрещаем совпадение исходных данных, результата, ключей и временных файлов.
 bool validate_file_paths(const CommandLineOptions& options, std::string& error) {
     const auto same_file = [](const std::string& first, const std::string& second) {
         std::error_code filesystem_error;
@@ -84,7 +83,6 @@ bool validate_file_paths(const CommandLineOptions& options, std::string& error) 
     return true;
 }
 
-// Разбор коротких и длинных аргументов и проверка их сочетаний.
 ParseResult parse_command_line(int argc,
                                char* argv[],
                                CommandLineOptions& options,
@@ -173,7 +171,6 @@ ParseResult parse_command_line(int argc,
         }
     }
 
-    // Справка имеет приоритет над любыми конфликтующими аргументами.
     if (options.help) return ParseResult::Help;
     if (options.menu) {
         if (argc != 2) {
@@ -231,6 +228,10 @@ ParseResult parse_command_line(int argc,
     if (options.input_path != "-" && options.output_path != "-" &&
         options.input_path == options.output_path) {
         error = "Входной и выходной файлы должны иметь разные пути.";
+        return ParseResult::Error;
+    }
+    if (options.generate_key && options.save_key_path == "-" && options.output_path == "-") {
+        error = "Ключ и результат не могут одновременно записываться в стандартный вывод.";
         return ParseResult::Error;
     }
     if (options.key_path == "-" && options.input_path == "-") {

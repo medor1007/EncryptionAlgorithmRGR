@@ -31,7 +31,7 @@ bool parse(const std::vector<std::string>& arguments,
 int main() {
     std::cout << "Проверка аргументов командной строки\n";
     int passed = 0;
-    constexpr int TOTAL = 15;
+    constexpr int TOTAL = 16;
     passed += parse({"encryption_rgr"}, ParseResult::Help, "справка без аргументов");
     passed += parse({"encryption_rgr", "--unknown", "--help"},
                     ParseResult::Help, "справка при конфликтующих аргументах");
@@ -71,6 +71,9 @@ int main() {
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-g", "-s", "key.bin", "-i", "source.bin", "-o", "key.bin"},
                     ParseResult::Error, "конфликт нового ключа и результата");
+    passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
+                     "-g", "-s", "-", "-i", "source.bin"},
+                    ParseResult::Error, "конфликт ключа и шифротекста в стандартном выводе");
     std::cout << "Пройдено проверок: " << passed << " из " << TOTAL << '\n';
     return passed == TOTAL ? 0 : 1;
 }
