@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <numeric>
 
 namespace {
@@ -28,6 +29,84 @@ struct MemoryWiper {
     ~MemoryWiper() {
         if (data != nullptr && size != 0) OPENSSL_cleanse(data, size);
     }
+};
+
+class StreamReader {
+public:
+    StreamReader(CipherReadCallback callback, void* context)
+        : callback_(callback), context_(context) {}
+
+    bool read_exact(std::uint8_t* destination, std::size_t size) {
+        std::size_t copied = 0;
+        while (copied < size) {
+            if (position_ == available_ && !refill()) return false;
+            const std::size_t chunk = std::min(size - copied, available_ - position_);
+            std::copy_n(buffer_.begin() + static_cast<std::ptrdiff_t>(position_), chunk,
+                        destination + copied);
+            position_ += chunk;
+            copied += chunk;
+        }
+        return true;
+    }
+
+    bool at_end() {
+        return position_ == available_ && refill() && available_ == 0;
+    }
+
+private:
+    bool refill() {
+        position_ = 0;
+        available_ = 0;
+        if (ended_) return true;
+        if (!callback_(context_, buffer_.data(), buffer_.size(), &available_) ||
+            available_ > buffer_.size()) return false;
+        if (available_ == 0) ended_ = true;
+        return true;
+    }
+
+    CipherReadCallback callback_;
+    void* context_;
+    std::array<std::uint8_t, 65536> buffer_{};
+    std::size_t position_ = 0;
+    std::size_t available_ = 0;
+    bool ended_ = false;
+};
+
+class StreamWriter {
+public:
+    StreamWriter(CipherWriteCallback callback, void* context)
+        : callback_(callback), context_(context) {}
+    ~StreamWriter() { OPENSSL_cleanse(buffer_.data(), buffer_.size()); }
+
+    bool write(const std::uint8_t* data, std::size_t size) {
+        std::size_t copied = 0;
+        while (copied < size) {
+            const std::size_t chunk = std::min(size - copied,
+                                               buffer_.size() - buffered_);
+            std::copy_n(data + copied, chunk,
+                        buffer_.begin() + static_cast<std::ptrdiff_t>(buffered_));
+            buffered_ += chunk;
+            copied += chunk;
+            if (buffered_ == buffer_.size() && !flush()) return false;
+        }
+        return true;
+    }
+
+    bool finish() { return flush(); }
+
+private:
+    bool flush() {
+        if (buffered_ == 0) return true;
+        if (!callback_(context_, buffer_.data(), buffered_)) return false;
+        OPENSSL_cleanse(buffer_.data(), buffered_);
+        buffered_ = 0;
+        return true;
+    }
+
+    CipherWriteCallback callback_;
+    void* context_;
+    std::array<std::uint8_t, 65536> buffer_{};
+    std::size_t buffered_ = 0;
 };
 
 int inverse_mod_256(int value, int& inverse) {
@@ -292,6 +371,143 @@ void free_buffer_impl(std::uint8_t* buffer, std::size_t buffer_size) {
     std::free(buffer);
 }
 
+std::uint64_t decode_length(const std::uint8_t* source) {
+    std::uint64_t value = 0;
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        value |= static_cast<std::uint64_t>(source[index]) << (index * 8);
+    }
+    return value;
+}
+
+void transform_pair(const std::uint8_t* key,
+                    int first,
+                    int second,
+                    std::uint8_t* output) {
+    output[0] = mod_256(first * key[0] + second * key[2]);
+    output[1] = mod_256(first * key[1] + second * key[3]);
+}
+
+int encrypt_stream_impl(ConstBuffer key,
+                        std::uint64_t input_size,
+                        const std::uint8_t* input_digest,
+                        CipherReadCallback read_callback,
+                        CipherWriteCallback write_callback,
+                        void* context) {
+    if (key.data == nullptr || key.size != kKeySize || input_digest == nullptr ||
+        read_callback == nullptr || write_callback == nullptr ||
+        input_size > std::numeric_limits<std::size_t>::max()) return 0;
+    int determinant_inverse = 0;
+    if (!inverse_mod_256(static_cast<int>(key.data[0]) * key.data[3] -
+                         static_cast<int>(key.data[1]) * key.data[2],
+                         determinant_inverse)) return 0;
+
+    std::array<std::uint8_t, kHeaderSize> header{};
+    std::copy(kMagic.begin(), kMagic.end(), header.begin());
+    for (std::size_t index = 0; index < sizeof(input_size); ++index) {
+        header[4 + index] = static_cast<std::uint8_t>(input_size >> (index * 8));
+    }
+    std::copy_n(input_digest, kDigestSize, header.begin() + kLegacyHeaderSize);
+    StreamReader reader(read_callback, context);
+    StreamWriter writer(write_callback, context);
+    if (!writer.write(header.data(), header.size())) return 0;
+
+    std::array<std::uint8_t, 65536> input_buffer{};
+    std::array<std::uint8_t, 65536> output_buffer{};
+    std::uint64_t remaining = input_size;
+    while (remaining >= 2) {
+        const std::size_t chunk_size = static_cast<std::size_t>(
+            std::min<std::uint64_t>(remaining & ~std::uint64_t{1}, input_buffer.size()));
+        if (!reader.read_exact(input_buffer.data(), chunk_size)) return 0;
+        for (std::size_t offset = 0; offset < chunk_size; offset += 2) {
+            transform_pair(key.data, input_buffer[offset], input_buffer[offset + 1],
+                           output_buffer.data() + offset);
+        }
+        if (!writer.write(output_buffer.data(), chunk_size)) return 0;
+        remaining -= chunk_size;
+    }
+    if (remaining == 1) {
+        std::uint8_t final_byte = 0;
+        std::array<std::uint8_t, 2> encrypted_pair{};
+        if (!reader.read_exact(&final_byte, 1)) return 0;
+        transform_pair(key.data, final_byte, 1, encrypted_pair.data());
+        if (!writer.write(encrypted_pair.data(), encrypted_pair.size())) return 0;
+    } else {
+        const std::array<std::uint8_t, 2> padding{2, 2};
+        std::array<std::uint8_t, 2> encrypted_pair{};
+        transform_pair(key.data, padding[0], padding[1], encrypted_pair.data());
+        if (!writer.write(encrypted_pair.data(), encrypted_pair.size())) return 0;
+    }
+    return reader.at_end() && writer.finish() ? 1 : 0;
+}
+
+int decrypt_stream_impl(ConstBuffer key,
+                        CipherReadCallback read_callback,
+                        CipherWriteCallback write_callback,
+                        void* context) {
+    if (key.data == nullptr || key.size != kKeySize ||
+        read_callback == nullptr || write_callback == nullptr) return 0;
+    int determinant_inverse = 0;
+    if (!inverse_mod_256(static_cast<int>(key.data[0]) * key.data[3] -
+                         static_cast<int>(key.data[1]) * key.data[2],
+                         determinant_inverse)) return 0;
+
+    StreamReader reader(read_callback, context);
+    StreamWriter writer(write_callback, context);
+    std::array<std::uint8_t, kHeaderSize> header{};
+    if (!reader.read_exact(header.data(), kLegacyHeaderSize)) return 0;
+    const bool is_current = std::equal(kMagic.begin(), kMagic.end(), header.begin());
+    const bool has_digest = is_current ||
+        std::equal(kPreviousMagic.begin(), kPreviousMagic.end(), header.begin());
+    const bool is_legacy = std::equal(kLegacyMagic.begin(), kLegacyMagic.end(), header.begin());
+    if (!has_digest && !is_legacy) return 0;
+    if (has_digest && !reader.read_exact(header.data() + kLegacyHeaderSize, kDigestSize)) {
+        return 0;
+    }
+
+    const std::uint64_t original_size = decode_length(header.data() + 4);
+    if (original_size > std::numeric_limits<std::size_t>::max()) return 0;
+    const std::uint64_t padding = is_current ? 2 - original_size % 2
+                                              : original_size % 2;
+    if (original_size > std::numeric_limits<std::uint64_t>::max() - padding) return 0;
+    const std::uint64_t encrypted_size = original_size + padding;
+    if ((encrypted_size % 2) != 0) return 0;
+
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest_context(
+        has_digest ? EVP_MD_CTX_new() : nullptr, EVP_MD_CTX_free);
+    if (has_digest && (!digest_context ||
+        EVP_DigestInit_ex(digest_context.get(), EVP_sha256(), nullptr) != 1)) return 0;
+
+    std::uint64_t position = 0;
+    while (position < encrypted_size) {
+        std::array<std::uint8_t, 2> encrypted_pair{};
+        std::array<std::uint8_t, 2> plaintext_pair{};
+        if (!reader.read_exact(encrypted_pair.data(), encrypted_pair.size())) return 0;
+        transform_pair(key.data, encrypted_pair[0], encrypted_pair[1],
+                       plaintext_pair.data());
+        for (std::size_t index = 0; index < plaintext_pair.size(); ++index) {
+            const std::uint64_t byte_position = position + index;
+            if (byte_position < original_size) {
+                if (has_digest && EVP_DigestUpdate(digest_context.get(),
+                        &plaintext_pair[index], 1) != 1) return 0;
+                if (!writer.write(&plaintext_pair[index], 1)) return 0;
+            } else if (is_current && plaintext_pair[index] != padding) {
+                return 0;
+            }
+        }
+        position += encrypted_pair.size();
+    }
+    if (!reader.at_end()) return 0;
+    if (has_digest) {
+        std::array<std::uint8_t, kDigestSize> calculated_digest{};
+        unsigned int digest_size = 0;
+        if (EVP_DigestFinal_ex(digest_context.get(), calculated_digest.data(),
+                               &digest_size) != 1 || digest_size != calculated_digest.size() ||
+            !std::equal(calculated_digest.begin(), calculated_digest.end(),
+                        header.begin() + kLegacyHeaderSize)) return 0;
+    }
+    return writer.finish() ? 1 : 0;
+}
+
 const CipherModuleApi kApi{
     CIPHER_MODULE_ABI_VERSION,
     sizeof(CipherModuleApi),
@@ -301,6 +517,8 @@ const CipherModuleApi kApi{
     encrypt,
     decrypt,
     free_buffer,
+    encrypt_stream,
+    decrypt_stream,
     nullptr,
     nullptr,
 };
@@ -392,6 +610,28 @@ extern "C" CIPHER_MODULE_EXPORT int decrypt(
 extern "C" CIPHER_MODULE_EXPORT void free_buffer(
     std::uint8_t* buffer, std::size_t buffer_size) {
     free_buffer_impl(buffer, buffer_size);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int encrypt_stream(
+    ConstBuffer key, std::uint64_t input_size, const std::uint8_t* input_digest,
+    CipherReadCallback read_callback, CipherWriteCallback write_callback,
+    void* context) {
+    try {
+        return encrypt_stream_impl(key, input_size, input_digest, read_callback,
+                                   write_callback, context);
+    } catch (...) {
+        return 0;
+    }
+}
+
+extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
+    ConstBuffer key, CipherReadCallback read_callback,
+    CipherWriteCallback write_callback, void* context) {
+    try {
+        return decrypt_stream_impl(key, read_callback, write_callback, context);
+    } catch (...) {
+        return 0;
+    }
 }
 
 extern "C" CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void) {

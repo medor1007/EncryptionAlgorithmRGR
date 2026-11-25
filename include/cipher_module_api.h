@@ -30,6 +30,14 @@ typedef struct MutBuffer {
     size_t size;
 } MutBuffer;
 
+typedef int (*CipherReadCallback)(void* context,
+                                 uint8_t* buffer,
+                                 size_t capacity,
+                                 size_t* bytes_read);
+typedef int (*CipherWriteCallback)(void* context,
+                                   const uint8_t* buffer,
+                                   size_t size);
+
 typedef struct AlgorithmInfo {
     uint32_t abi_version;
     size_t struct_size;
@@ -56,6 +64,16 @@ typedef struct CipherModuleApi {
     int (*encrypt)(ConstBuffer key, ConstBuffer input, MutBuffer* output);
     int (*decrypt)(ConstBuffer key, ConstBuffer input, MutBuffer* output);
     void (*free_buffer)(uint8_t* buffer, size_t buffer_size);
+    int (*encrypt_stream)(ConstBuffer key,
+                          uint64_t input_size,
+                          const uint8_t* input_digest,
+                          CipherReadCallback read_callback,
+                          CipherWriteCallback write_callback,
+                          void* context);
+    int (*decrypt_stream)(ConstBuffer key,
+                          CipherReadCallback read_callback,
+                          CipherWriteCallback write_callback,
+                          void* context);
     int (*generate_keys_for_test)(const uint8_t* parameters,
                                   size_t parameters_size,
                                   uint8_t** encryption_key,
@@ -85,6 +103,16 @@ CIPHER_MODULE_EXPORT int decrypt(ConstBuffer key,
                                  ConstBuffer input,
                                  MutBuffer* output);
 CIPHER_MODULE_EXPORT void free_buffer(uint8_t* buffer, size_t buffer_size);
+CIPHER_MODULE_EXPORT int encrypt_stream(ConstBuffer key,
+                                        uint64_t input_size,
+                                        const uint8_t* input_digest,
+                                        CipherReadCallback read_callback,
+                                        CipherWriteCallback write_callback,
+                                        void* context);
+CIPHER_MODULE_EXPORT int decrypt_stream(ConstBuffer key,
+                                        CipherReadCallback read_callback,
+                                        CipherWriteCallback write_callback,
+                                        void* context);
 #ifdef CIPHER_MODULE_TESTING
 CIPHER_MODULE_EXPORT int generate_keys_for_test(const uint8_t* parameters,
                                                 size_t parameters_size,

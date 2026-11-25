@@ -19,7 +19,9 @@ bool CipherModule::load(const std::string& path, std::string& error) {
         !load_function("generate_keys", api_storage_.generate_keys) ||
         !load_function("encrypt", api_storage_.encrypt) ||
         !load_function("decrypt", api_storage_.decrypt) ||
-        !load_function("free_buffer", api_storage_.free_buffer)) {
+        !load_function("free_buffer", api_storage_.free_buffer) ||
+        !load_function("encrypt_stream", api_storage_.encrypt_stream) ||
+        !load_function("decrypt_stream", api_storage_.decrypt_stream)) {
         library_.unload();
         api_storage_ = {};
         return false;

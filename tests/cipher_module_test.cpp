@@ -1,5 +1,7 @@
 #include "core/cipher_module.hpp"
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,6 +25,67 @@ struct ModuleBuffer {
         }
     }
 };
+
+struct MemoryStream {
+    const std::vector<std::uint8_t>* input = nullptr;
+    std::size_t position = 0;
+    std::vector<std::uint8_t> output;
+};
+
+int read_memory_stream(void* context, std::uint8_t* buffer,
+                       std::size_t capacity, std::size_t* bytes_read) {
+    if (context == nullptr || buffer == nullptr || bytes_read == nullptr) return 0;
+    auto* stream = static_cast<MemoryStream*>(context);
+    const std::size_t count = std::min(capacity, stream->input->size() - stream->position);
+    std::copy_n(stream->input->begin() + static_cast<std::ptrdiff_t>(stream->position),
+                count, buffer);
+    stream->position += count;
+    *bytes_read = count;
+    return 1;
+}
+
+int write_memory_stream(void* context, const std::uint8_t* buffer, std::size_t size) {
+    if (context == nullptr || (buffer == nullptr && size != 0)) return 0;
+    auto* stream = static_cast<MemoryStream*>(context);
+    stream->output.insert(stream->output.end(), buffer, buffer + size);
+    return 1;
+}
+
+bool check_stream_round_trip(const CipherModuleApi* api,
+                             const std::vector<std::uint8_t>& encryption_key,
+                             const std::vector<std::uint8_t>& decryption_key,
+                             std::size_t input_size) {
+    std::vector<std::uint8_t> plaintext(input_size);
+    for (std::size_t index = 0; index < plaintext.size(); ++index) {
+        plaintext[index] = static_cast<std::uint8_t>((index * 37) & 0xff);
+    }
+    std::array<std::uint8_t, EVP_MAX_MD_SIZE> digest{};
+    unsigned int digest_size = 0;
+    if (EVP_Digest(plaintext.empty() ? nullptr : plaintext.data(), plaintext.size(),
+                   digest.data(), &digest_size, EVP_sha256(), nullptr) != 1 ||
+        digest_size != 32) return false;
+
+    MemoryStream stream{&plaintext, 0, {}};
+    const ConstBuffer encryption_key_buffer{encryption_key.data(), encryption_key.size()};
+    if (api->encrypt_stream(encryption_key_buffer, plaintext.size(), digest.data(),
+                            read_memory_stream, write_memory_stream, &stream) == 0) {
+        std::cerr << "Ошибка потокового шифрования, длина " << input_size << '\n';
+        return false;
+    }
+    const std::vector<std::uint8_t> ciphertext = stream.output;
+    stream.input = &ciphertext;
+    stream.position = 0;
+    stream.output.clear();
+    const ConstBuffer decryption_key_buffer{decryption_key.data(), decryption_key.size()};
+    if (api->decrypt_stream(decryption_key_buffer, read_memory_stream,
+                            write_memory_stream, &stream) == 0 ||
+        stream.output != plaintext) {
+        std::cerr << "Ошибка потокового расшифрования, длина " << input_size << '\n';
+        return false;
+    }
+    std::cout << "[OK] Потоковая обработка: " << input_size << " байт\n";
+    return true;
+}
 
 bool transform(const CipherModuleApi* api,
                bool encrypting,
@@ -234,6 +297,13 @@ bool check_module(const std::string& library_path) {
                           boundary_data, "граничная длина блока")) {
         return false;
     }
+    const bool is_hill = std::string(module.name()).find("Хилл") != std::string::npos;
+    const std::array<std::size_t, 2> stream_sizes = is_hill
+        ? std::array<std::size_t, 2>{0, 509}
+        : std::array<std::size_t, 2>{254, 508};
+    for (const std::size_t stream_size : stream_sizes) {
+        if (!check_stream_round_trip(api, public_key, private_key, stream_size)) return false;
+    }
 
     const std::vector<std::uint8_t> invalid_key{0x01, 0x02, 0x03};
     ModuleBuffer invalid_encryption{api};
@@ -324,6 +394,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "Пройдено проверок: 8 из 8\n";
+    std::cout << "Пройдено проверок: 12 из 12\n";
     return 0;
 }

@@ -462,6 +462,220 @@ void free_buffer_impl(std::uint8_t* buffer, std::size_t buffer_size) noexcept {
     std::free(buffer);
 }
 
+class StreamReader {
+public:
+    StreamReader(CipherReadCallback callback, void* context)
+        : callback_(callback), context_(context) {}
+
+    bool read_exact(std::uint8_t* destination, std::size_t size) {
+        std::size_t copied = 0;
+        while (copied < size) {
+            if (position_ == available_ && !refill()) return false;
+            const std::size_t chunk = std::min(size - copied, available_ - position_);
+            std::copy_n(buffer_.begin() + static_cast<std::ptrdiff_t>(position_), chunk,
+                        destination + copied);
+            position_ += chunk;
+            copied += chunk;
+        }
+        return true;
+    }
+
+    bool at_end() {
+        return position_ == available_ && refill() && available_ == 0;
+    }
+
+private:
+    bool refill() {
+        position_ = 0;
+        available_ = 0;
+        if (ended_) return true;
+        if (!callback_(context_, buffer_.data(), buffer_.size(), &available_) ||
+            available_ > buffer_.size()) return false;
+        if (available_ == 0) ended_ = true;
+        return true;
+    }
+
+    CipherReadCallback callback_;
+    void* context_;
+    std::array<std::uint8_t, 65536> buffer_{};
+    std::size_t position_ = 0;
+    std::size_t available_ = 0;
+    bool ended_ = false;
+};
+
+class StreamWriter {
+public:
+    StreamWriter(CipherWriteCallback callback, void* context)
+        : callback_(callback), context_(context) {}
+    ~StreamWriter() { OPENSSL_cleanse(buffer_.data(), buffer_.size()); }
+
+    bool write(const std::uint8_t* data, std::size_t size) {
+        std::size_t copied = 0;
+        while (copied < size) {
+            const std::size_t chunk = std::min(size - copied, buffer_.size() - buffered_);
+            std::copy_n(data + copied, chunk,
+                        buffer_.begin() + static_cast<std::ptrdiff_t>(buffered_));
+            buffered_ += chunk;
+            copied += chunk;
+            if (buffered_ == buffer_.size() && !flush()) return false;
+        }
+        return true;
+    }
+
+    bool finish() { return flush(); }
+
+private:
+    bool flush() {
+        if (buffered_ == 0) return true;
+        if (!callback_(context_, buffer_.data(), buffered_)) return false;
+        OPENSSL_cleanse(buffer_.data(), buffered_);
+        buffered_ = 0;
+        return true;
+    }
+
+    CipherWriteCallback callback_;
+    void* context_;
+    std::array<std::uint8_t, 65536> buffer_{};
+    std::size_t buffered_ = 0;
+};
+
+int encrypt_stream_impl(ConstBuffer key,
+                        std::uint64_t input_size,
+                        const std::uint8_t* input_digest,
+                        CipherReadCallback read_callback,
+                        CipherWriteCallback write_callback,
+                        void* context) {
+    if (input_digest == nullptr || read_callback == nullptr || write_callback == nullptr ||
+        input_size > std::numeric_limits<std::uint64_t>::max() - kContainerHeaderBytes) return 0;
+    BnPtr p(nullptr), generator(nullptr), public_value(nullptr);
+    if (!parse_key(key.data, key.size, kPublicKeyMagic, p, generator, public_value)) return 0;
+    BnPtr message = make_bn(), ephemeral = make_bn(), first = make_bn();
+    BnPtr shared = make_bn(), second = make_bn(), range = make_bn();
+    BnContextPtr context_bn = make_context();
+    if (!message || !ephemeral || !first || !shared || !second || !range || !context_bn ||
+        BN_copy(range.get(), p.get()) == nullptr || BN_sub_word(range.get(), 2) != 1) return 0;
+
+    StreamReader reader(read_callback, context);
+    StreamWriter writer(write_callback, context);
+    std::array<std::uint8_t, kContainerHeaderBytes> header{};
+    std::copy(kCiphertextMagic.begin(), kCiphertextMagic.end(), header.begin());
+    encode_length(input_size, header.data() + 4);
+    std::copy_n(input_digest, kDigestBytes,
+                header.begin() + kLegacyContainerHeaderBytes);
+    if (!writer.write(header.data(), header.size())) return 0;
+
+    std::uint64_t remaining = input_size;
+    const std::uint64_t block_count = input_size / kPlaintextBlockBytes + 1;
+    for (std::uint64_t block = 0; block < block_count; ++block) {
+        const std::size_t block_size = static_cast<std::size_t>(
+            std::min<std::uint64_t>(remaining, kPlaintextBlockBytes));
+        std::array<std::uint8_t, kFieldBytes> encoded{};
+        encoded[0] = 1;
+        if (block_size != 0 && !reader.read_exact(encoded.data() + 1, block_size)) {
+            OPENSSL_cleanse(encoded.data(), encoded.size());
+            return 0;
+        }
+        const std::uint8_t padding = static_cast<std::uint8_t>(kFieldBytes - 1 - block_size);
+        std::fill(encoded.begin() + static_cast<std::ptrdiff_t>(1 + block_size),
+                  encoded.end(), padding);
+        if (BN_bin2bn(encoded.data(), static_cast<int>(encoded.size()), message.get()) == nullptr ||
+            BN_rand_range(ephemeral.get(), range.get()) != 1 ||
+            BN_add_word(ephemeral.get(), 1) != 1 ||
+            BN_mod_exp(first.get(), generator.get(), ephemeral.get(), p.get(), context_bn.get()) != 1 ||
+            BN_mod_exp(shared.get(), public_value.get(), ephemeral.get(), p.get(), context_bn.get()) != 1 ||
+            BN_mod_mul(second.get(), message.get(), shared.get(), p.get(), context_bn.get()) != 1) {
+            OPENSSL_cleanse(encoded.data(), encoded.size());
+            return 0;
+        }
+        std::array<std::uint8_t, kCiphertextBlockBytes> encrypted{};
+        const bool encoded_ok =
+            BN_bn2binpad(first.get(), encrypted.data(), static_cast<int>(kFieldBytes)) ==
+                static_cast<int>(kFieldBytes) &&
+            BN_bn2binpad(second.get(), encrypted.data() + kFieldBytes,
+                         static_cast<int>(kFieldBytes)) == static_cast<int>(kFieldBytes);
+        OPENSSL_cleanse(encoded.data(), encoded.size());
+        if (!encoded_ok || !writer.write(encrypted.data(), encrypted.size())) return 0;
+        remaining -= block_size;
+    }
+    return reader.at_end() && writer.finish() ? 1 : 0;
+}
+
+int decrypt_stream_impl(ConstBuffer key,
+                        CipherReadCallback read_callback,
+                        CipherWriteCallback write_callback,
+                        void* context) {
+    if (read_callback == nullptr || write_callback == nullptr) return 0;
+    BnPtr p(nullptr), generator(nullptr), private_exponent(nullptr);
+    if (!parse_key(key.data, key.size, kPrivateKeyMagic, p, generator, private_exponent)) return 0;
+    StreamReader reader(read_callback, context);
+    StreamWriter writer(write_callback, context);
+    std::array<std::uint8_t, kContainerHeaderBytes> header{};
+    if (!reader.read_exact(header.data(), kLegacyContainerHeaderBytes)) return 0;
+    const bool is_current = std::equal(kCiphertextMagic.begin(), kCiphertextMagic.end(), header.begin());
+    const bool has_digest = is_current ||
+        std::equal(kPreviousCiphertextMagic.begin(), kPreviousCiphertextMagic.end(), header.begin());
+    const bool is_legacy = std::equal(kLegacyCiphertextMagic.begin(), kLegacyCiphertextMagic.end(), header.begin());
+    if (!has_digest && !is_legacy) return 0;
+    if (has_digest && !reader.read_exact(header.data() + kLegacyContainerHeaderBytes,
+                                         kDigestBytes)) return 0;
+    const std::uint64_t original_size = decode_length(header.data() + 4);
+    const std::uint64_t block_limit = is_current ? kPlaintextBlockBytes
+                                                  : kLegacyPlaintextBlockBytes;
+    const std::uint64_t block_count = is_current
+        ? original_size / block_limit + 1
+        : original_size / block_limit + (original_size % block_limit != 0 ? 1 : 0);
+    if (block_count > std::numeric_limits<std::uint64_t>::max() / kCiphertextBlockBytes) return 0;
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest_context(
+        has_digest ? EVP_MD_CTX_new() : nullptr, EVP_MD_CTX_free);
+    if (has_digest && (!digest_context ||
+        EVP_DigestInit_ex(digest_context.get(), EVP_sha256(), nullptr) != 1)) return 0;
+    BnPtr first = make_bn(), second = make_bn(), shared = make_bn();
+    BnPtr inverse(nullptr), message = make_bn();
+    BnContextPtr bn_context = make_context();
+    if (!first || !second || !shared || !message || !bn_context) return 0;
+
+    for (std::uint64_t block = 0; block < block_count; ++block) {
+        std::array<std::uint8_t, kCiphertextBlockBytes> encrypted{};
+        if (!reader.read_exact(encrypted.data(), encrypted.size()) ||
+            BN_bin2bn(encrypted.data(), static_cast<int>(kFieldBytes), first.get()) == nullptr ||
+            BN_bin2bn(encrypted.data() + kFieldBytes, static_cast<int>(kFieldBytes), second.get()) == nullptr ||
+            BN_is_zero(first.get()) || BN_cmp(first.get(), p.get()) >= 0 ||
+            BN_cmp(second.get(), p.get()) >= 0 ||
+            BN_mod_exp(shared.get(), first.get(), private_exponent.get(), p.get(), bn_context.get()) != 1) return 0;
+        inverse.reset(BN_mod_inverse(nullptr, shared.get(), p.get(), bn_context.get()));
+        if (!inverse || BN_mod_mul(message.get(), second.get(), inverse.get(), p.get(), bn_context.get()) != 1) return 0;
+        std::array<std::uint8_t, kFieldBytes> decoded{};
+        if (BN_bn2binpad(message.get(), decoded.data(), static_cast<int>(decoded.size())) !=
+                static_cast<int>(decoded.size()) || decoded[0] != 1) {
+            OPENSSL_cleanse(decoded.data(), decoded.size());
+            return 0;
+        }
+        const std::uint64_t offset = block * block_limit;
+        const std::size_t block_size = static_cast<std::size_t>(
+            std::min<std::uint64_t>(block_limit, original_size - offset));
+        const std::uint8_t expected_padding = static_cast<std::uint8_t>(kFieldBytes - 1 - block_size);
+        const auto valid_padding = [is_current, expected_padding](std::uint8_t byte) {
+            return is_current ? byte == expected_padding : byte == 0;
+        };
+        const bool padding_ok = std::all_of(
+            decoded.begin() + static_cast<std::ptrdiff_t>(1 + block_size), decoded.end(), valid_padding);
+        const bool digest_ok = !has_digest || block_size == 0 ||
+            EVP_DigestUpdate(digest_context.get(), decoded.data() + 1, block_size) == 1;
+        const bool write_ok = block_size == 0 || writer.write(decoded.data() + 1, block_size);
+        OPENSSL_cleanse(decoded.data(), decoded.size());
+        if (!padding_ok || !digest_ok || !write_ok) return 0;
+    }
+    if (!reader.at_end()) return 0;
+    if (has_digest) {
+        std::array<std::uint8_t, kDigestBytes> digest{};
+        unsigned int digest_size = 0;
+        if (EVP_DigestFinal_ex(digest_context.get(), digest.data(), &digest_size) != 1 ||
+            digest_size != digest.size() || !std::equal(digest.begin(), digest.end(),
+                header.begin() + kLegacyContainerHeaderBytes)) return 0;
+    }
+    return writer.finish() ? 1 : 0;
+}
+
 const CipherModuleApi kApi{
     CIPHER_MODULE_ABI_VERSION,
     sizeof(CipherModuleApi),
@@ -471,6 +685,8 @@ const CipherModuleApi kApi{
     ::encrypt,
     ::decrypt,
     ::free_buffer,
+    ::encrypt_stream,
+    ::decrypt_stream,
 #ifdef CIPHER_MODULE_TESTING
     ::generate_keys_for_test,
     ::encrypt_for_test,
@@ -602,6 +818,28 @@ extern "C" CIPHER_MODULE_EXPORT int decrypt(
 extern "C" CIPHER_MODULE_EXPORT void free_buffer(
     std::uint8_t* buffer, std::size_t buffer_size) {
     free_buffer_impl(buffer, buffer_size);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int encrypt_stream(
+    ConstBuffer key, std::uint64_t input_size, const std::uint8_t* input_digest,
+    CipherReadCallback read_callback, CipherWriteCallback write_callback,
+    void* context) {
+    try {
+        return encrypt_stream_impl(key, input_size, input_digest, read_callback,
+                                   write_callback, context);
+    } catch (...) {
+        return 0;
+    }
+}
+
+extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
+    ConstBuffer key, CipherReadCallback read_callback,
+    CipherWriteCallback write_callback, void* context) {
+    try {
+        return decrypt_stream_impl(key, read_callback, write_callback, context);
+    } catch (...) {
+        return 0;
+    }
 }
 
 extern "C" CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void) {

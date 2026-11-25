@@ -3,6 +3,7 @@
 #include "core/password_auth.hpp"
 
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 #include <filesystem>
 #include <array>
@@ -10,6 +11,8 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -42,6 +45,34 @@ struct StringCleanser {
         if (!text.empty()) OPENSSL_cleanse(text.data(), text.size());
     }
 };
+
+struct FileCloser {
+    void operator()(std::FILE* file) const {
+        if (file != nullptr) std::fclose(file);
+    }
+};
+
+using FilePtr = std::unique_ptr<std::FILE, FileCloser>;
+
+struct FileStreamContext {
+    std::FILE* input;
+    std::FILE* output;
+};
+
+int read_stream_callback(void* context, std::uint8_t* buffer,
+                         std::size_t capacity, std::size_t* bytes_read) {
+    if (context == nullptr || buffer == nullptr || bytes_read == nullptr) return 0;
+    auto* stream = static_cast<FileStreamContext*>(context);
+    *bytes_read = std::fread(buffer, 1, capacity, stream->input);
+    return std::ferror(stream->input) == 0;
+}
+
+int write_stream_callback(void* context, const std::uint8_t* buffer,
+                          std::size_t size) {
+    if (context == nullptr || (buffer == nullptr && size != 0)) return 0;
+    auto* stream = static_cast<FileStreamContext*>(context);
+    return size == 0 || std::fwrite(buffer, 1, size, stream->output) == size;
+}
 
 // Ввод команд и путей.
 int read_choice(int minimum, int maximum) {
@@ -656,21 +687,101 @@ bool select_key(const std::vector<std::uint8_t>& record,
     return true;
 }
 
-bool read_cli_input(const std::string& path, std::vector<std::uint8_t>& data) {
-    if (path != "-") return read_file(path, data);
-    data.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
-    return !std::cin.bad();
+bool spool_input(FILE* source, FILE* spool, std::uint64_t& size,
+                 std::array<std::uint8_t, 32>& digest) {
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest_context(
+        EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    if (!digest_context || EVP_DigestInit_ex(digest_context.get(), EVP_sha256(), nullptr) != 1) {
+        return false;
+    }
+    std::array<std::uint8_t, 65536> buffer{};
+    size = 0;
+    while (true) {
+        const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), source);
+        if (count != 0) {
+            if (size > std::numeric_limits<std::uint64_t>::max() - count ||
+                EVP_DigestUpdate(digest_context.get(), buffer.data(), count) != 1 ||
+                std::fwrite(buffer.data(), 1, count, spool) != count) {
+                OPENSSL_cleanse(buffer.data(), buffer.size());
+                return false;
+            }
+            size += count;
+        }
+        if (count < buffer.size()) {
+            if (std::ferror(source) != 0) {
+                OPENSSL_cleanse(buffer.data(), buffer.size());
+                return false;
+            }
+            break;
+        }
+    }
+    OPENSSL_cleanse(buffer.data(), buffer.size());
+    unsigned int digest_size = 0;
+    return EVP_DigestFinal_ex(digest_context.get(), digest.data(), &digest_size) == 1 &&
+           digest_size == digest.size() && std::fflush(spool) == 0 &&
+           std::fseek(spool, 0, SEEK_SET) == 0;
 }
 
-bool write_cli_output(const std::string& path,
-                      const std::uint8_t* data,
-                      std::size_t size) {
-    if (path == "-") {
-        if (size != 0) {
-            std::cout.write(reinterpret_cast<const char*>(data),
-                            static_cast<std::streamsize>(size));
+bool copy_file_stream(FILE* source, FILE* destination) {
+    if (std::fseek(source, 0, SEEK_SET) != 0) return false;
+    std::array<std::uint8_t, 65536> buffer{};
+    while (true) {
+        const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), source);
+        if (count != 0 && std::fwrite(buffer.data(), 1, count, destination) != count) {
+            OPENSSL_cleanse(buffer.data(), buffer.size());
+            return false;
         }
-        return std::cout.good();
+        if (count < buffer.size()) {
+            const bool success = std::ferror(source) == 0;
+            OPENSSL_cleanse(buffer.data(), buffer.size());
+            return success;
+        }
+    }
+}
+
+bool commit_cli_output(const std::string& path, FILE* spool) {
+    if (path == "-") return copy_file_stream(spool, stdout) && std::fflush(stdout) == 0;
+    if (!prepare_output_directory(path)) return false;
+    const std::filesystem::path destination(path);
+    const std::filesystem::path temporary = path + ".tmp";
+    FilePtr output(std::fopen(temporary.string().c_str(), "wb"));
+    if (!output || !copy_file_stream(spool, output.get()) || std::fflush(output.get()) != 0) {
+        output.reset();
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
+    }
+    output.reset();
+#ifndef _WIN32
+    if (chmod(temporary.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
+    }
+#endif
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), destination.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
+    }
+#else
+    if (std::rename(temporary.c_str(), destination.c_str()) != 0) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
+    }
+#endif
+    return true;
+}
+
+bool write_cli_bytes(const std::string& path,
+                     const std::uint8_t* data,
+                     std::size_t size) {
+    if (path == "-") {
+        return (size == 0 || std::fwrite(data, 1, size, stdout) == size) &&
+               std::fflush(stdout) == 0;
     }
     if (!prepare_output_directory(path)) return false;
     return write_file(path, data, size);
@@ -697,14 +808,14 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
         auto key_record = make_key_pair_record(encryption_key, decryption_key);
         VectorCleanser key_record_cleanser{key_record};
         if (options.write_key) {
-            if (!write_cli_output("-", key_record.data(), key_record.size())) {
+            if (!write_cli_bytes("-", key_record.data(), key_record.size())) {
                 std::cerr << "Не удалось вывести ключи в стандартный поток.\n";
                 return 1;
             }
             return 0;
         }
         if (options.save_key_path.empty() ||
-            !write_cli_output(options.save_key_path, key_record.data(), key_record.size())) {
+            !write_cli_bytes(options.save_key_path, key_record.data(), key_record.size())) {
             std::cerr << "Не удалось сохранить пару ключей.\n";
             return 1;
         }
@@ -724,23 +835,40 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     }
 
     const auto* api = module.api();
-    const std::vector<std::uint8_t>& key = encryption_key;
-    std::vector<std::uint8_t> input;
-    VectorCleanser input_cleanser{input};
-    if (!read_cli_input(options.input_path, input)) {
-        std::cerr << "Не удалось прочитать входные данные.\n";
+    FilePtr input_file(options.input_path == "-"
+        ? nullptr : std::fopen(options.input_path.c_str(), "rb"));
+    FILE* input_handle = options.input_path == "-" ? stdin : input_file.get();
+    FilePtr input_spool(std::tmpfile());
+    FilePtr output_spool(std::tmpfile());
+    if (input_handle == nullptr || !input_spool || !output_spool) {
+        std::cerr << "Не удалось открыть входной или временный файл.\n";
         return 1;
     }
-    std::vector<std::uint8_t> result;
-    VectorCleanser result_cleanser{result};
-    if (!transform_data(api, options.mode == OperationMode::Encrypt,
-                        key, input, result)) {
+    std::uint64_t input_size = 0;
+    std::array<std::uint8_t, 32> input_digest{};
+    if (options.mode == OperationMode::Encrypt &&
+        !spool_input(input_handle, input_spool.get(), input_size, input_digest)) {
+        std::cerr << "Не удалось подготовить входные данные для шифрования.\n";
+        return 1;
+    }
+    FILE* transform_input = options.mode == OperationMode::Encrypt
+        ? input_spool.get() : input_handle;
+    FileStreamContext transform_context{transform_input, output_spool.get()};
+    const ConstBuffer key_buffer{encryption_key.data(), encryption_key.size()};
+    const bool transformed = options.mode == OperationMode::Encrypt
+        ? api->encrypt_stream(key_buffer, input_size, input_digest.data(),
+                              read_stream_callback, write_stream_callback,
+                              &transform_context) != 0
+        : api->decrypt_stream(key_buffer, read_stream_callback,
+                              write_stream_callback, &transform_context) != 0;
+    if (!transformed) {
         std::cerr << (options.mode == OperationMode::Encrypt
             ? "Не удалось зашифровать входные данные.\n"
             : "Не удалось расшифровать входные данные. Проверьте ключ и контейнер.\n");
         return 1;
     }
-    if (!write_cli_output(options.output_path, result.data(), result.size())) {
+    if (std::fflush(output_spool.get()) != 0 ||
+        !commit_cli_output(options.output_path, output_spool.get())) {
         std::cerr << "Не удалось записать результат.\n";
         return 1;
     }

@@ -87,6 +87,7 @@ if(BUILD_TESTING)
         src
     )
     enable_strict_warnings(crypto_tests)
+    target_link_libraries(crypto_tests PRIVATE OpenSSL::Crypto)
     if(UNIX AND NOT APPLE)
         target_link_libraries(crypto_tests PRIVATE ${CMAKE_DL_LIBS})
     endif()
