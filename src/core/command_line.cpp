@@ -43,9 +43,13 @@ bool validate_file_paths(const CommandLineOptions& options, std::string& error) 
         if (std::filesystem::equivalent(first, second, filesystem_error) &&
             !filesystem_error) return true;
         filesystem_error.clear();
-        const auto first_path = std::filesystem::weakly_canonical(std::filesystem::absolute(first, filesystem_error), filesystem_error);
+        const auto first_absolute = std::filesystem::absolute(first, filesystem_error);
         if (filesystem_error) return false;
-        const auto second_path = std::filesystem::weakly_canonical(std::filesystem::absolute(second, filesystem_error), filesystem_error);
+        const auto first_path = std::filesystem::weakly_canonical(first_absolute, filesystem_error);
+        if (filesystem_error) return false;
+        const auto second_absolute = std::filesystem::absolute(second, filesystem_error);
+        if (filesystem_error) return false;
+        const auto second_path = std::filesystem::weakly_canonical(second_absolute, filesystem_error);
         return !filesystem_error && first_path == second_path;
     };
     const std::vector<std::pair<std::string, std::string>> paths{

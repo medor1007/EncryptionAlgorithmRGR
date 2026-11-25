@@ -163,35 +163,6 @@ bool check_round_trip(const CipherModuleApi* api,
         return false;
     }
 
-    constexpr std::size_t LEGACY_HEADER_SIZE = 12;
-    constexpr std::size_t CURRENT_HEADER_SIZE = 44;
-    const bool is_hill = encrypted.size >= CURRENT_HEADER_SIZE &&
-                         std::memcmp(encrypted.data, "HIL2", 4) == 0;
-    const bool is_elgamal = encrypted.size >= CURRENT_HEADER_SIZE &&
-                            std::memcmp(encrypted.data, "ELG2", 4) == 0;
-    if (is_hill || is_elgamal) {
-        std::vector<std::uint8_t> legacy_ciphertext;
-        legacy_ciphertext.reserve(LEGACY_HEADER_SIZE + encrypted.size - CURRENT_HEADER_SIZE);
-        const char* legacy_magic = is_hill ? "HIL1" : "ELG1";
-        legacy_ciphertext.insert(legacy_ciphertext.end(), legacy_magic, legacy_magic + 4);
-        legacy_ciphertext.insert(legacy_ciphertext.end(), encrypted.data + 4,
-                                 encrypted.data + LEGACY_HEADER_SIZE);
-        legacy_ciphertext.insert(legacy_ciphertext.end(),
-                                 encrypted.data + CURRENT_HEADER_SIZE,
-                                 encrypted.data + encrypted.size);
-
-        ModuleBuffer legacy_decrypted{api};
-        if (!transform(api, false, decryption_key, legacy_ciphertext.data(),
-                       legacy_ciphertext.size(), legacy_decrypted) ||
-            legacy_decrypted.size != plaintext.size() ||
-            (legacy_decrypted.size != 0 &&
-             !std::equal(plaintext.begin(), plaintext.end(), legacy_decrypted.data))) {
-            std::cerr << "Не удалось расшифровать контейнер старого формата: "
-                      << case_name << '\n';
-            return false;
-        }
-    }
-
     std::vector<std::uint8_t> modified_ciphertext(
         encrypted.data, encrypted.data + encrypted.size);
     modified_ciphertext.back() ^= 0x01;
@@ -203,6 +174,45 @@ bool check_round_trip(const CipherModuleApi* api,
     }
     std::cout << "[OK] " << api->get_algorithm_info()->algorithm_name
               << ": " << case_name << '\n';
+    return true;
+}
+
+// Старые контейнеры задаются явно: новые операции создают только формат версии 3.
+bool check_legacy_formats(const CipherModuleApi* api,
+                          const std::vector<std::uint8_t>& private_key,
+                          bool is_hill) {
+    const std::vector<std::uint8_t> plaintext{0};
+    std::array<std::uint8_t, EVP_MAX_MD_SIZE> digest{};
+    unsigned int digest_size = 0;
+    if (EVP_Digest(plaintext.data(), plaintext.size(), digest.data(), &digest_size,
+                   EVP_sha256(), nullptr) != 1 || digest_size != 32) return false;
+    for (const char version : {'1', '2'}) {
+        const std::string magic = std::string(is_hill ? "HIL" : "ELG") + version;
+        std::vector<std::uint8_t> ciphertext(magic.begin(), magic.end());
+        ciphertext.resize(version == '1' ? 12 : 44, 0);
+        ciphertext[4] = 1;
+        if (version == '2') std::copy_n(digest.begin(), 32, ciphertext.begin() + 12);
+        const std::size_t offset = ciphertext.size();
+        ciphertext.resize(offset + (is_hill ? 2 : 512), 0);
+        if (!is_hill) {
+            // При x = 2 и r = 3: a = 8, b = 2^2040 * 64 = 2^2046.
+            ciphertext[offset + 255] = 8;
+            ciphertext[offset + 256] = 64;
+        }
+        ModuleBuffer restored{api};
+        if (!transform(api, false, private_key, ciphertext.data(), ciphertext.size(),
+                       restored) || restored.size != 1 || restored.data[0] != 0) {
+            std::cerr << "Ошибка чтения старого контейнера " << magic << '\n';
+            return false;
+        }
+        MemoryStream stream{&ciphertext, 0, {}};
+        const ConstBuffer key{private_key.data(), private_key.size()};
+        if (api->decrypt_stream(key, read_memory_stream, write_memory_stream, &stream) !=
+                CIPHER_MODULE_STATUS_OK || stream.output != plaintext) {
+            std::cerr << "Ошибка потокового чтения старого контейнера " << magic << '\n';
+            return false;
+        }
+    }
     return true;
 }
 
@@ -299,6 +309,7 @@ bool check_module(const std::string& library_path) {
         return false;
     }
     const bool is_hill = std::string(module.name()).find("Хилл") != std::string::npos;
+    if (!check_legacy_formats(api, private_key, is_hill)) return false;
     const std::array<std::size_t, 2> stream_sizes = is_hill
         ? std::array<std::size_t, 2>{0, 509}
         : std::array<std::size_t, 2>{254, 508};
