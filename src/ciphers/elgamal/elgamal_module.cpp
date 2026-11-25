@@ -29,6 +29,12 @@ constexpr std::array<std::uint8_t, 4> LEGACY_CIPHERTEXT_MAGIC{'E', 'L', 'G', '1'
 constexpr std::array<std::uint8_t, 4> PREVIOUS_CIPHERTEXT_MAGIC{'E', 'L', 'G', '2'};
 constexpr std::array<std::uint8_t, 4> CIPHERTEXT_MAGIC{'E', 'L', 'G', '3'};
 
+struct MemoryWiper {
+    void* data;
+    std::size_t size;
+    ~MemoryWiper() { if (data != nullptr && size != 0) OPENSSL_cleanse(data, size); }
+};
+
 struct VectorWiper {
     std::vector<std::uint8_t>& bytes;
     ~VectorWiper() {
@@ -206,6 +212,7 @@ int generate_keys_impl(const std::uint8_t* parameters,
     std::vector<std::uint8_t> public_key(PUBLIC_KEY_MAGIC.begin(), PUBLIC_KEY_MAGIC.end());
     std::vector<std::uint8_t> private_key(PRIVATE_KEY_MAGIC.begin(), PRIVATE_KEY_MAGIC.end());
     VectorWiper private_key_wiper{private_key};
+    private_key.reserve(KEY_BYTES);
     if (!append_bn(public_key, p.get()) || !append_bn(public_key, generator.get()) ||
         !append_bn(public_key, public_value.get()) || !append_bn(private_key, p.get()) ||
         !append_bn(private_key, generator.get()) || !append_bn(private_key, private_exponent.get()) ||
@@ -277,6 +284,7 @@ int encrypt_impl(const std::uint8_t* key,
         const std::uint8_t padding = static_cast<std::uint8_t>(
             FIELD_BYTES - 1 - block_size);
         std::array<std::uint8_t, FIELD_BYTES> encoded{};
+        MemoryWiper encoded_wiper{encoded.data(), encoded.size()};
         encoded[0] = 1;
         if (block_size != 0) {
             std::copy_n(input + offset, block_size, encoded.begin() + 1);
@@ -391,6 +399,7 @@ int decrypt_impl(const std::uint8_t* key,
         }
 
         std::array<std::uint8_t, FIELD_BYTES> decoded{};
+        MemoryWiper decoded_wiper{decoded.data(), decoded.size()};
         if (BN_bn2binpad(message.get(), decoded.data(), static_cast<int>(decoded.size())) !=
                 static_cast<int>(decoded.size()) || decoded[0] != 1) {
             OPENSSL_cleanse(decoded.data(), decoded.size());
@@ -466,6 +475,7 @@ class StreamReader {
 public:
     StreamReader(CipherReadCallback callback, void* context)
         : callback_(callback), context_(context) {}
+    ~StreamReader() { OPENSSL_cleanse(buffer_.data(), buffer_.size()); }
 
     bool read_exact(std::uint8_t* destination, std::size_t size) {
         std::size_t copied = 0;
@@ -570,6 +580,7 @@ int encrypt_stream_impl(ConstBuffer key,
         const std::size_t block_size = static_cast<std::size_t>(
             std::min<std::uint64_t>(remaining, PLAINTEXT_BLOCK_BYTES));
         std::array<std::uint8_t, FIELD_BYTES> encoded{};
+        MemoryWiper encoded_wiper{encoded.data(), encoded.size()};
         encoded[0] = 1;
         if (block_size != 0 && !reader.read_exact(encoded.data() + 1, block_size)) {
             OPENSSL_cleanse(encoded.data(), encoded.size());
@@ -645,6 +656,7 @@ int decrypt_stream_impl(ConstBuffer key,
         inverse.reset(BN_mod_inverse(nullptr, shared.get(), p.get(), bn_context.get()));
         if (!inverse || BN_mod_mul(message.get(), second.get(), inverse.get(), p.get(), bn_context.get()) != 1) return 0;
         std::array<std::uint8_t, FIELD_BYTES> decoded{};
+        MemoryWiper decoded_wiper{decoded.data(), decoded.size()};
         if (BN_bn2binpad(message.get(), decoded.data(), static_cast<int>(decoded.size())) !=
                 static_cast<int>(decoded.size()) || decoded[0] != 1) {
             OPENSSL_cleanse(decoded.data(), decoded.size());

@@ -203,6 +203,8 @@ std::vector<std::uint8_t> make_key_pair_record(
     const std::vector<std::uint8_t>& encryption_key,
     const std::vector<std::uint8_t>& decryption_key) {
     std::vector<std::uint8_t> record(KEY_PAIR_MAGIC.begin(), KEY_PAIR_MAGIC.end());
+    record.reserve(KEY_PAIR_MAGIC.size() + 2 * sizeof(std::uint64_t) +
+                   encryption_key.size() + decryption_key.size());
     append_u64(record, encryption_key.size());
     append_u64(record, decryption_key.size());
     record.insert(record.end(), encryption_key.begin(), encryption_key.end());

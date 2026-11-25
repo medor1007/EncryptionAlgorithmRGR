@@ -35,6 +35,7 @@ class StreamReader {
 public:
     StreamReader(CipherReadCallback callback, void* context)
         : callback_(callback), context_(context) {}
+    ~StreamReader() { OPENSSL_cleanse(buffer_.data(), buffer_.size()); }
 
     bool read_exact(std::uint8_t* destination, std::size_t size) {
         std::size_t copied = 0;
@@ -412,6 +413,7 @@ int encrypt_stream_impl(ConstBuffer key,
     if (!writer.write(header.data(), header.size())) return 0;
 
     std::array<std::uint8_t, 65536> input_buffer{};
+    MemoryWiper input_wiper{input_buffer.data(), input_buffer.size()};
     std::array<std::uint8_t, 65536> output_buffer{};
     std::uint64_t remaining = input_size;
     while (remaining >= 2) {
@@ -427,6 +429,7 @@ int encrypt_stream_impl(ConstBuffer key,
     }
     if (remaining == 1) {
         std::uint8_t final_byte = 0;
+        MemoryWiper final_byte_wiper{&final_byte, sizeof(final_byte)};
         std::array<std::uint8_t, 2> encrypted_pair{};
         if (!reader.read_exact(&final_byte, 1)) return 0;
         transform_pair(key.data, final_byte, 1, encrypted_pair.data());
@@ -481,6 +484,7 @@ int decrypt_stream_impl(ConstBuffer key,
     while (position < encrypted_size) {
         std::array<std::uint8_t, 2> encrypted_pair{};
         std::array<std::uint8_t, 2> plaintext_pair{};
+        MemoryWiper plaintext_wiper{plaintext_pair.data(), plaintext_pair.size()};
         if (!reader.read_exact(encrypted_pair.data(), encrypted_pair.size())) return 0;
         transform_pair(key.data, encrypted_pair[0], encrypted_pair[1],
                        plaintext_pair.data());
