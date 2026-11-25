@@ -32,48 +32,48 @@ int main() {
     std::cout << "Проверка аргументов командной строки\n";
     int passed = 0;
     constexpr int TOTAL = 16;
-    passed += parse({"encryption_rgr"}, ParseResult::Help, "справка без аргументов");
+    passed += parse({"encryption_rgr"}, ParseResult::HELP, "справка без аргументов");
     passed += parse({"encryption_rgr", "--unknown", "--help"},
-                    ParseResult::Help, "справка при конфликтующих аргументах");
+                    ParseResult::HELP, "справка при конфликтующих аргументах");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-k", "key.bin", "-i", "-", "-o", "cipher.bin"},
-                    ParseResult::Ready, "короткие псевдонимы и стандартный ввод");
+                    ParseResult::READY, "короткие псевдонимы и стандартный ввод");
     passed += parse({"encryption_rgr", "--algorithm", "elgamal", "--mode",
                      "generate-key", "--write-key"},
-                    ParseResult::Ready, "генерация ключей в стандартный вывод");
+                    ParseResult::READY, "генерация ключей в стандартный вывод");
     passed += parse({"encryption_rgr", "--algorithm=hill", "--mode=encrypt",
                      "--key=key.bin", "--input=-", "--output=result.bin"},
-                    ParseResult::Ready, "длинные аргументы GNU с присваиванием значения");
+                    ParseResult::READY, "длинные аргументы GNU с присваиванием значения");
     passed += parse({"encryption_rgr", "--algorithm", "hill"},
-                    ParseResult::Error, "отсутствующие обязательные аргументы");
+                    ParseResult::ERROR, "отсутствующие обязательные аргументы");
     passed += parse({"encryption_rgr", "--algorithm", "unknown", "--mode", "encrypt",
                      "--key", "key.bin"},
-                    ParseResult::Error, "отклонение неизвестного алгоритма");
+                    ParseResult::ERROR, "отклонение неизвестного алгоритма");
     passed += parse({"encryption_rgr", "--algorithm", "hill", "--mode", "encrypt",
                      "--key", "-", "--input", "-"},
-                    ParseResult::Error, "отклонение конфликтующего стандартного ввода");
-    passed += parse({"encryption_rgr", "--menu"}, ParseResult::Ready,
+                    ParseResult::ERROR, "отклонение конфликтующего стандартного ввода");
+    passed += parse({"encryption_rgr", "--menu"}, ParseResult::READY,
                     "запуск интерактивного меню");
     passed += parse({"encryption_rgr", "--menu", "--algorithm", "hill"},
-                    ParseResult::Error, "отклонение сочетания меню с другими флагами");
+                    ParseResult::ERROR, "отклонение сочетания меню с другими флагами");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-g", "-s", "key.bin", "-k", "old.bin"},
-                    ParseResult::Error, "конфликт чтения и генерации ключа");
+                    ParseResult::ERROR, "конфликт чтения и генерации ключа");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-g", "-s", "source.bin", "-i", "source.bin", "-o", "out.bin"},
-                    ParseResult::Error, "защита исходника от записи ключа");
+                    ParseResult::ERROR, "защита исходника от записи ключа");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-k", "key.bin", "-i", "source.bin", "-o", "./key.bin"},
-                    ParseResult::Error, "защита ключа через эквивалентный путь");
+                    ParseResult::ERROR, "защита ключа через эквивалентный путь");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-k", "key.bin", "-i", "result.bin.tmp", "-o", "result.bin"},
-                    ParseResult::Error, "защита входа от временного файла");
+                    ParseResult::ERROR, "защита входа от временного файла");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-g", "-s", "key.bin", "-i", "source.bin", "-o", "key.bin"},
-                    ParseResult::Error, "конфликт нового ключа и результата");
+                    ParseResult::ERROR, "конфликт нового ключа и результата");
     passed += parse({"encryption_rgr", "-a", "hill", "-m", "encrypt",
                      "-g", "-s", "-", "-i", "source.bin"},
-                    ParseResult::Error, "конфликт ключа и шифротекста в стандартном выводе");
+                    ParseResult::ERROR, "конфликт ключа и шифротекста в стандартном выводе");
     std::cout << "Пройдено проверок: " << passed << " из " << TOTAL << '\n';
     return passed == TOTAL ? 0 : 1;
 }

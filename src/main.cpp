@@ -30,8 +30,8 @@
 namespace {
 
 enum class Cipher {
-    Hill,
-    ElGamal,
+    HILL,
+    ELGAMAL,
 };
 
 struct VectorCleanser {
@@ -170,11 +170,11 @@ std::filesystem::path module_path(Cipher cipher, const char* executable_path) {
         ? executable.parent_path()
         : std::filesystem::current_path();
 #ifdef _WIN32
-    const char* filename = cipher == Cipher::Hill ? "cipher_hill.dll" : "cipher_elgamal.dll";
+    const char* filename = cipher == Cipher::HILL ? "cipher_hill.dll" : "cipher_elgamal.dll";
 #elif __APPLE__
-    const char* filename = cipher == Cipher::Hill ? "libcipher_hill.dylib" : "libcipher_elgamal.dylib";
+    const char* filename = cipher == Cipher::HILL ? "libcipher_hill.dylib" : "libcipher_elgamal.dylib";
 #else
-    const char* filename = cipher == Cipher::Hill ? "libcipher_hill.so" : "libcipher_elgamal.so";
+    const char* filename = cipher == Cipher::HILL ? "libcipher_hill.so" : "libcipher_elgamal.so";
 #endif
     return directory / "modules" / filename;
 }
@@ -262,11 +262,11 @@ bool select_key(const SecureBytes& record,
         decryption_size != record.size() - DATA_OFFSET - encryption_size) {
         return false;
     }
-    const std::size_t selected_offset = mode == OperationMode::Encrypt
+    const std::size_t selected_offset = mode == OperationMode::ENCRYPT
         ? DATA_OFFSET
         : DATA_OFFSET + static_cast<std::size_t>(encryption_size);
     const std::size_t selected_size = static_cast<std::size_t>(
-        mode == OperationMode::Encrypt ? encryption_size : decryption_size);
+        mode == OperationMode::ENCRYPT ? encryption_size : decryption_size);
     if (selected_size == 0) return false;
     key.assign(record.begin() + static_cast<std::ptrdiff_t>(selected_offset),
                record.begin() + static_cast<std::ptrdiff_t>(selected_offset + selected_size));
@@ -380,7 +380,7 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
         std::cerr << path_error << '\n';
         return 2;
     }
-    const Cipher cipher = options.algorithm == "hill" ? Cipher::Hill : Cipher::ElGamal;
+    const Cipher cipher = options.algorithm == "hill" ? Cipher::HILL : Cipher::ELGAMAL;
     CipherModule module;
     std::string error;
     if (!module.load(module_path(cipher, executable_path).string(), error)) {
@@ -392,7 +392,7 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     SecureBytes decryption_key;
     VectorCleanser encryption_key_cleanser{encryption_key};
     VectorCleanser decryption_key_cleanser{decryption_key};
-    if (options.mode == OperationMode::GenerateKey || options.generate_key) {
+    if (options.mode == OperationMode::GENERATE_KEY || options.generate_key) {
         if (!generate_key_pair(module, encryption_key, decryption_key)) {
             std::cerr << "Не удалось сгенерировать ключи.\n";
             return 1;
@@ -411,7 +411,7 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
             std::cerr << "Не удалось сохранить пару ключей.\n";
             return 1;
         }
-        if (options.mode == OperationMode::GenerateKey) return 0;
+        if (options.mode == OperationMode::GENERATE_KEY) return 0;
     } else {
         SecureBytes key_record;
         VectorCleanser key_record_cleanser{key_record};
@@ -451,23 +451,23 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     }
     std::uint64_t input_size = 0;
     std::array<std::uint8_t, 32> input_digest{};
-    if (options.mode == OperationMode::Encrypt &&
+    if (options.mode == OperationMode::ENCRYPT &&
         !spool_input(input_handle, input_spool.get(), input_size, input_digest)) {
         std::cerr << "Не удалось подготовить входные данные для шифрования.\n";
         return 1;
     }
-    FILE* transform_input = options.mode == OperationMode::Encrypt
+    FILE* transform_input = options.mode == OperationMode::ENCRYPT
         ? input_spool.get() : input_handle;
     FileStreamContext transform_context{transform_input, output_spool.get()};
     const ConstBuffer key_buffer{encryption_key.data(), encryption_key.size()};
-    const bool transformed = options.mode == OperationMode::Encrypt
+    const bool transformed = options.mode == OperationMode::ENCRYPT
         ? api->encrypt_stream(key_buffer, input_size, input_digest.data(),
                               read_stream_callback, write_stream_callback,
                               &transform_context) == CIPHER_MODULE_STATUS_OK
         : api->decrypt_stream(key_buffer, read_stream_callback,
                               write_stream_callback, &transform_context) == CIPHER_MODULE_STATUS_OK;
     if (!transformed) {
-        std::cerr << (options.mode == OperationMode::Encrypt
+        std::cerr << (options.mode == OperationMode::ENCRYPT
             ? "Не удалось зашифровать входные данные.\n"
             : "Не удалось расшифровать входные данные. Проверьте ключ и контейнер.\n");
         return 1;
@@ -533,7 +533,7 @@ int run_interactive_menu(const char* executable_path) {
             CommandLineOptions options;
             options.algorithm = algorithm;
             if (operation_choice == 3) {
-                options.mode = OperationMode::GenerateKey;
+                options.mode = OperationMode::GENERATE_KEY;
                 options.mode_set = true;
                 options.save_key_path = read_menu_path(
                     "Куда сохранить пару ключей", default_key_path);
@@ -545,7 +545,7 @@ int run_interactive_menu(const char* executable_path) {
             }
 
             options.mode = operation_choice == 1
-                ? OperationMode::Encrypt : OperationMode::Decrypt;
+                ? OperationMode::ENCRYPT : OperationMode::DECRYPT;
             options.mode_set = true;
             options.key_path = read_menu_path("Файл пары ключей", default_key_path);
             if (options.key_path == "-") {
@@ -577,7 +577,7 @@ int run_interactive_menu(const char* executable_path) {
             if (operation_choice == 1 && !key_exists) {
                 CommandLineOptions key_options;
                 key_options.algorithm = algorithm;
-                key_options.mode = OperationMode::GenerateKey;
+                key_options.mode = OperationMode::GENERATE_KEY;
                 key_options.mode_set = true;
                 key_options.save_key_path = options.key_path;
                 if (execute_cli(key_options, executable_path) != 0) continue;
@@ -605,11 +605,11 @@ int main(int argc, char* argv[]) {
     CommandLineOptions options;
     std::string error;
     const ParseResult result = parse_command_line(argc, argv, options, error);
-    if (result == ParseResult::Help) {
+    if (result == ParseResult::HELP) {
         std::cout << command_line_help(executable_path);
         return 0;
     }
-    if (result == ParseResult::Error) {
+    if (result == ParseResult::ERROR) {
         std::cerr << error << '\n' << command_line_help(executable_path);
         return 2;
     }

@@ -53,8 +53,8 @@ bool validate_file_paths(const CommandLineOptions& options, std::string& error) 
         return !filesystem_error && first_path == second_path;
     };
     const std::vector<std::pair<std::string, std::string>> paths{
-        {"входных данных", options.mode == OperationMode::GenerateKey ? "" : options.input_path},
-        {"результата", options.mode == OperationMode::GenerateKey ? "" : options.output_path},
+        {"входных данных", options.mode == OperationMode::GENERATE_KEY ? "" : options.input_path},
+        {"результата", options.mode == OperationMode::GENERATE_KEY ? "" : options.output_path},
         {"ключа", options.key_path},
         {"новой пары ключей", options.save_key_path},
     };
@@ -70,7 +70,7 @@ bool validate_file_paths(const CommandLineOptions& options, std::string& error) 
         }
     }
     for (const auto& output : {options.save_key_path,
-                              options.mode == OperationMode::GenerateKey ? "" : options.output_path}) {
+                              options.mode == OperationMode::GENERATE_KEY ? "" : options.output_path}) {
         if (output.empty() || output == "-") continue;
         for (const auto& input : paths) {
             if (input.second.empty() || input.second == "-") continue;
@@ -89,13 +89,13 @@ ParseResult parse_command_line(int argc,
                                std::string& error) {
     if (argc <= 1) {
         options.help = true;
-        return ParseResult::Help;
+        return ParseResult::HELP;
     }
     for (int index = 1; index < argc; ++index) {
         if (std::string(argv[index]) == "--help" ||
             std::string(argv[index]) == "-h") {
             options.help = true;
-            return ParseResult::Help;
+            return ParseResult::HELP;
         }
     }
 
@@ -129,31 +129,31 @@ ParseResult parse_command_line(int argc,
             return assign_value(index, argc, argv, name, destination, error);
         };
         if (option == "--algorithm") {
-            if (!read_value(option, value)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::ERROR;
             options.algorithm = value;
         } else if (option == "--mode") {
-            if (!read_value(option, value)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::ERROR;
             options.mode_set = true;
-            if (value == "encrypt") options.mode = OperationMode::Encrypt;
-            else if (value == "decrypt") options.mode = OperationMode::Decrypt;
-            else if (value == "generate-key") options.mode = OperationMode::GenerateKey;
+            if (value == "encrypt") options.mode = OperationMode::ENCRYPT;
+            else if (value == "decrypt") options.mode = OperationMode::DECRYPT;
+            else if (value == "generate-key") options.mode = OperationMode::GENERATE_KEY;
             else {
                 error = "Неизвестный режим «" + value + "».";
-                return ParseResult::Error;
+                return ParseResult::ERROR;
             }
         } else if (option == "--key") {
-            if (!read_value(option, value)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::ERROR;
             options.key_path = value;
         } else if (option == "--input") {
-            if (!read_value(option, value)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::ERROR;
             options.input_path = value;
         } else if (option == "--output") {
-            if (!read_value(option, value)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::ERROR;
             options.output_path = value;
         } else if (option == "--generate-key") {
             options.generate_key = true;
         } else if (option == "--save-key") {
-            if (!read_value(option, value)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::ERROR;
             options.save_key_path = value;
         } else if (option == "--write-key") {
             options.write_key = true;
@@ -161,84 +161,84 @@ ParseResult parse_command_line(int argc,
             options.menu = true;
         } else {
             error = "Неизвестный аргумент «" + std::string(argv[index]) + "».";
-            return ParseResult::Error;
+            return ParseResult::ERROR;
         }
         if (has_inline_value && option != "--algorithm" && option != "--mode" &&
             option != "--key" && option != "--input" && option != "--output" &&
             option != "--save-key") {
             error = "Аргумент " + option + " не принимает значение.";
-            return ParseResult::Error;
+            return ParseResult::ERROR;
         }
     }
 
-    if (options.help) return ParseResult::Help;
+    if (options.help) return ParseResult::HELP;
     if (options.menu) {
         if (argc != 2) {
             error = "Аргумент --menu нельзя сочетать с другими параметрами.";
-            return ParseResult::Error;
+            return ParseResult::ERROR;
         }
-        return ParseResult::Ready;
+        return ParseResult::READY;
     }
     if (options.algorithm.empty() || !options.mode_set) {
         error = "Необходимо указать алгоритм и режим работы.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (options.algorithm != "hill" && options.algorithm != "elgamal") {
         error = "Неизвестный алгоритм «" + options.algorithm +
                 "». Допустимы: hill, elgamal.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
 
-    if (options.mode == OperationMode::GenerateKey) {
+    if (options.mode == OperationMode::GENERATE_KEY) {
         if (options.generate_key || !options.key_path.empty() ||
             options.input_path != "-" || options.output_path != "-" ||
             (options.save_key_path.empty() && !options.write_key) ||
             (!options.save_key_path.empty() && options.write_key)) {
             error = "Для генерации ключей укажите ровно один из аргументов "
                     "--save-key или --write-key; остальные параметры ввода-вывода не нужны.";
-            return ParseResult::Error;
+            return ParseResult::ERROR;
         }
-        return ParseResult::Ready;
+        return ParseResult::READY;
     }
 
     if (options.generate_key && !options.key_path.empty()) {
         error = "Нельзя одновременно указывать --key и --generate-key.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (options.write_key) {
         error = "--write-key применяется только вместе с --mode generate-key.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
-    if (options.generate_key && options.mode != OperationMode::Encrypt) {
+    if (options.generate_key && options.mode != OperationMode::ENCRYPT) {
         error = "Автоматическая генерация ключей поддерживается только при шифровании.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (options.generate_key && options.save_key_path.empty()) {
         error = "При --generate-key требуется указать --save-key.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (!options.generate_key && options.key_path.empty()) {
         error = "Для шифрования или расшифрования необходимо указать --key.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (!options.save_key_path.empty() && !options.generate_key) {
         error = "--save-key при шифровании допустим только вместе с --generate-key.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (options.input_path != "-" && options.output_path != "-" &&
         options.input_path == options.output_path) {
         error = "Входной и выходной файлы должны иметь разные пути.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (options.generate_key && options.save_key_path == "-" && options.output_path == "-") {
         error = "Ключ и результат не могут одновременно записываться в стандартный вывод.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
     if (options.key_path == "-" && options.input_path == "-") {
         error = "Ключ и входные данные не могут одновременно читаться из стандартного ввода.";
-        return ParseResult::Error;
+        return ParseResult::ERROR;
     }
-    return validate_file_paths(options, error) ? ParseResult::Ready : ParseResult::Error;
+    return validate_file_paths(options, error) ? ParseResult::READY : ParseResult::ERROR;
 }
 
 std::string command_line_help(const char* executable_name) {

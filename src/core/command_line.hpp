@@ -5,16 +5,16 @@
 #include <vector>
 
 enum class OperationMode {
-    Encrypt,
-    Decrypt,
-    GenerateKey,
+    ENCRYPT,
+    DECRYPT,
+    GENERATE_KEY,
 };
 
 struct CommandLineOptions {
     bool help = false;
     bool menu = false;
     std::string algorithm;
-    OperationMode mode = OperationMode::Encrypt;
+    OperationMode mode = OperationMode::ENCRYPT;
     bool mode_set = false;
     std::string key_path;
     std::string input_path = "-";
@@ -25,9 +25,9 @@ struct CommandLineOptions {
 };
 
 enum class ParseResult {
-    Help,
-    Ready,
-    Error,
+    HELP,
+    READY,
+    ERROR,
 };
 
 ParseResult parse_command_line(int argc,
