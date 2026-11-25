@@ -13,6 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <termios.h>
@@ -27,6 +28,19 @@ constexpr std::size_t SALT_SIZE = 16;
 constexpr std::size_t HASH_SIZE = 32;
 constexpr char RECORD_VERSION[] = "RGRPASS1";
 constexpr char DEFAULT_PASSWORD[] = "qwerty123";
+
+#ifndef _WIN32
+bool write_terminal(int descriptor, const char* data, std::size_t size) {
+    std::size_t written = 0;
+    while (written < size) {
+        const ssize_t result = write(descriptor, data + written, size - written);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) return false;
+        written += static_cast<std::size_t>(result);
+    }
+    return true;
+}
+#endif
 
 struct MemoryWiper {
     void* data;
@@ -122,14 +136,21 @@ std::string read_password(const std::string& prompt, std::string& error) {
         hidden_settings.c_lflag &= static_cast<tcflag_t>(~ECHO);
         tcsetattr(console, TCSAFLUSH, &hidden_settings);
     }
-    static_cast<void>(write(console, prompt.data(), prompt.size()));
+    if (!write_terminal(console, prompt.data(), prompt.size())) {
+        if (changed) tcsetattr(console, TCSAFLUSH, &original_settings);
+        close(console);
+        error = "Не удалось вывести приглашение для ввода пароля.";
+        return {};
+    }
     std::string password;
     char symbol = 0;
     while (read(console, &symbol, 1) == 1 && symbol != '\n' && symbol != '\r') {
         password.push_back(symbol);
     }
     if (changed) tcsetattr(console, TCSAFLUSH, &original_settings);
-    static_cast<void>(write(console, "\n", 1));
+    if (!write_terminal(console, "\n", 1)) {
+        error = "Не удалось завершить ввод пароля.";
+    }
     close(console);
 #endif
     return password;
