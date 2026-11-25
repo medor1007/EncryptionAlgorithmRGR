@@ -26,6 +26,18 @@ bool CipherModule::load(const std::string& path, std::string& error) {
     }
     api_storage_.abi_version = CIPHER_MODULE_ABI_VERSION;
     api_storage_.struct_size = sizeof(CipherModuleApi);
+    std::string optional_error;
+    void* test_key_function = library_.get_symbol("generate_keys_for_test", optional_error);
+    if (test_key_function != nullptr) {
+        api_storage_.generate_keys_for_test =
+            reinterpret_cast<decltype(api_storage_.generate_keys_for_test)>(test_key_function);
+    }
+    optional_error.clear();
+    void* test_encrypt_function = library_.get_symbol("encrypt_for_test", optional_error);
+    if (test_encrypt_function != nullptr) {
+        api_storage_.encrypt_for_test =
+            reinterpret_cast<decltype(api_storage_.encrypt_for_test)>(test_encrypt_function);
+    }
     api_ = &api_storage_;
 
     const AlgorithmInfo* information = api_->get_algorithm_info();

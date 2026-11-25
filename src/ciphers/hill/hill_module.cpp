@@ -2,6 +2,7 @@
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include <algorithm>
 #include <array>
@@ -10,7 +11,6 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
-#include <random>
 
 namespace {
 
@@ -103,7 +103,6 @@ int generate_keys_alloc(const std::uint8_t* parameters,
     *decryption_key_size = 0;
 
     try {
-        std::random_device random;
         std::array<std::uint8_t, kKeySize> key{};
         std::array<std::uint8_t, kKeySize> inverse{};
         MemoryWiper key_wiper{key.data(), key.size()};
@@ -111,9 +110,7 @@ int generate_keys_alloc(const std::uint8_t* parameters,
         int determinant_inverse = 0;
 
         do {
-            for (auto& byte : key) {
-                byte = static_cast<std::uint8_t>(random());
-            }
+            if (RAND_bytes(key.data(), static_cast<int>(key.size())) != 1) return 0;
         } while (!inverse_mod_256(
             static_cast<int>(key[0]) * key[3] - static_cast<int>(key[1]) * key[2],
             determinant_inverse));
@@ -304,6 +301,8 @@ const CipherModuleApi kApi{
     encrypt,
     decrypt,
     free_buffer,
+    nullptr,
+    nullptr,
 };
 
 std::size_t output_size(std::size_t input_size, int operation_type) {

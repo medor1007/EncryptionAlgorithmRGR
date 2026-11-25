@@ -31,7 +31,7 @@ bool parse(const std::vector<std::string>& arguments,
 int main() {
     std::cout << "Проверка аргументов командной строки\n";
     int passed = 0;
-    constexpr int total = 7;
+    constexpr int total = 8;
     passed += parse({"encryption_rgr"}, ParseResult::Help, "справка без аргументов");
     passed += parse({"encryption_rgr", "--unknown", "--help"},
                     ParseResult::Help, "справка при конфликтующих аргументах");
@@ -41,6 +41,9 @@ int main() {
     passed += parse({"encryption_rgr", "--algorithm", "elgamal", "--mode",
                      "generate-key", "--write-key"},
                     ParseResult::Ready, "генерация ключей в стандартный вывод");
+    passed += parse({"encryption_rgr", "--algorithm=hill", "--mode=encrypt",
+                     "--key=key.bin", "--input=-", "--output=result.bin"},
+                    ParseResult::Ready, "длинные аргументы GNU с присваиванием значения");
     passed += parse({"encryption_rgr", "--algorithm", "hill"},
                     ParseResult::Error, "отсутствующие обязательные аргументы");
     passed += parse({"encryption_rgr", "--algorithm", "unknown", "--mode", "encrypt",

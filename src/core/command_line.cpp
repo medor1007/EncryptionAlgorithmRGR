@@ -52,6 +52,14 @@ ParseResult parse_command_line(int argc,
 
     for (int index = 1; index < argc; ++index) {
         std::string option = argv[index];
+        std::string inline_value;
+        bool has_inline_value = false;
+        const std::size_t equals_position = option.find('=');
+        if (equals_position != std::string::npos) {
+            inline_value = option.substr(equals_position + 1);
+            option.erase(equals_position);
+            has_inline_value = true;
+        }
         if (option == "--help" || option == "-h") continue;
         const auto alias = kAliases.find(option);
         if (alias != kAliases.end()) {
@@ -59,11 +67,23 @@ ParseResult parse_command_line(int argc,
         }
 
         std::string value;
+        const auto read_value = [&](const std::string& name,
+                                    std::string& destination) {
+            if (has_inline_value) {
+                if (inline_value.empty()) {
+                    error = "Для аргумента " + name + " требуется непустое значение.";
+                    return false;
+                }
+                destination = inline_value;
+                return true;
+            }
+            return assign_value(index, argc, argv, name, destination, error);
+        };
         if (option == "--algorithm") {
-            if (!assign_value(index, argc, argv, option, value, error)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::Error;
             options.algorithm = value;
         } else if (option == "--mode") {
-            if (!assign_value(index, argc, argv, option, value, error)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::Error;
             options.mode_set = true;
             if (value == "encrypt") options.mode = OperationMode::Encrypt;
             else if (value == "decrypt") options.mode = OperationMode::Decrypt;
@@ -73,18 +93,18 @@ ParseResult parse_command_line(int argc,
                 return ParseResult::Error;
             }
         } else if (option == "--key") {
-            if (!assign_value(index, argc, argv, option, value, error)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::Error;
             options.key_path = value;
         } else if (option == "--input") {
-            if (!assign_value(index, argc, argv, option, value, error)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::Error;
             options.input_path = value;
         } else if (option == "--output") {
-            if (!assign_value(index, argc, argv, option, value, error)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::Error;
             options.output_path = value;
         } else if (option == "--generate-key") {
             options.generate_key = true;
         } else if (option == "--save-key") {
-            if (!assign_value(index, argc, argv, option, value, error)) return ParseResult::Error;
+            if (!read_value(option, value)) return ParseResult::Error;
             options.save_key_path = value;
         } else if (option == "--write-key") {
             options.write_key = true;
@@ -92,6 +112,12 @@ ParseResult parse_command_line(int argc,
             options.menu = true;
         } else {
             error = "Неизвестный аргумент «" + std::string(argv[index]) + "».";
+            return ParseResult::Error;
+        }
+        if (has_inline_value && option != "--algorithm" && option != "--mode" &&
+            option != "--key" && option != "--input" && option != "--output" &&
+            option != "--save-key") {
+            error = "Аргумент " + option + " не принимает значение.";
             return ParseResult::Error;
         }
     }

@@ -151,8 +151,9 @@ int generate_keys_impl(const std::uint8_t* parameters,
                        std::size_t* encryption_key_size,
                        std::uint8_t** decryption_key,
                        std::size_t* decryption_key_size) {
-    (void)parameters;
-    if (parameters_size != 0 || encryption_key == nullptr ||
+    if ((parameters == nullptr && parameters_size != 0) ||
+        (parameters_size != 0 && parameters_size != sizeof(std::uint32_t)) ||
+        encryption_key == nullptr ||
         encryption_key_size == nullptr || decryption_key == nullptr ||
         decryption_key_size == nullptr) {
         return 0;
@@ -180,8 +181,21 @@ int generate_keys_impl(const std::uint8_t* parameters,
         return 0;
     }
 
-    if (BN_rand_range(private_exponent.get(), range.get()) != 1 ||
-        BN_add_word(private_exponent.get(), 1) != 1 ||
+    bool exponent_ready = false;
+    if (parameters_size == 0) {
+        exponent_ready = BN_rand_range(private_exponent.get(), range.get()) == 1 &&
+                         BN_add_word(private_exponent.get(), 1) == 1;
+    } else {
+        const std::uint32_t fixed_exponent =
+            static_cast<std::uint32_t>(parameters[0]) |
+            (static_cast<std::uint32_t>(parameters[1]) << 8) |
+            (static_cast<std::uint32_t>(parameters[2]) << 16) |
+            (static_cast<std::uint32_t>(parameters[3]) << 24);
+        exponent_ready = fixed_exponent > 0 &&
+                         BN_set_word(private_exponent.get(), fixed_exponent) == 1 &&
+                         BN_cmp(private_exponent.get(), range.get()) <= 0;
+    }
+    if (!exponent_ready ||
         BN_mod_exp(public_value.get(), generator.get(), private_exponent.get(),
                    p.get(), context.get()) != 1) {
         return 0;
@@ -212,7 +226,8 @@ int encrypt_impl(const std::uint8_t* key,
                  const std::uint8_t* input,
                  std::size_t input_size,
                  std::uint8_t** output,
-                 std::size_t* output_size) {
+                 std::size_t* output_size,
+                 std::uint32_t deterministic_exponent) {
     if (output == nullptr || output_size == nullptr ||
         (input == nullptr && input_size != 0) ||
         input_size > std::numeric_limits<std::uint64_t>::max()) {
@@ -261,9 +276,13 @@ int encrypt_impl(const std::uint8_t* key,
         std::array<std::uint8_t, kFieldBytes> encoded{};
         encoded[0] = 1;
         std::copy_n(input + offset, block_size, encoded.begin() + 1);
+        const bool exponent_ready = deterministic_exponent == 0
+            ? BN_rand_range(ephemeral.get(), range.get()) == 1 &&
+              BN_add_word(ephemeral.get(), 1) == 1
+            : BN_set_word(ephemeral.get(), deterministic_exponent) == 1 &&
+              BN_cmp(ephemeral.get(), range.get()) <= 0;
         if (BN_bin2bn(encoded.data(), static_cast<int>(encoded.size()), message.get()) == nullptr ||
-            BN_rand_range(ephemeral.get(), range.get()) != 1 ||
-            BN_add_word(ephemeral.get(), 1) != 1 ||
+            !exponent_ready ||
             BN_mod_exp(first.get(), generator.get(), ephemeral.get(), p.get(), context.get()) != 1 ||
             BN_mod_exp(shared.get(), public_value.get(), ephemeral.get(), p.get(), context.get()) != 1 ||
             BN_mod_mul(second.get(), message.get(), shared.get(), p.get(), context.get()) != 1) {
@@ -408,19 +427,6 @@ int generate_keys_alloc(const std::uint8_t* parameters,
     }
 }
 
-int encrypt_alloc(const std::uint8_t* key,
-                  std::size_t key_size,
-                  const std::uint8_t* input,
-                  std::size_t input_size,
-                  std::uint8_t** output,
-                  std::size_t* output_size) noexcept {
-    try {
-        return encrypt_impl(key, key_size, input, input_size, output, output_size);
-    } catch (...) {
-        return 0;
-    }
-}
-
 int decrypt_alloc(const std::uint8_t* key,
                   std::size_t key_size,
                   const std::uint8_t* input,
@@ -448,6 +454,13 @@ const CipherModuleApi kApi{
     ::encrypt,
     ::decrypt,
     ::free_buffer,
+#ifdef CIPHER_MODULE_TESTING
+    ::generate_keys_for_test,
+    ::encrypt_for_test,
+#else
+    nullptr,
+    nullptr,
+#endif
 };
 
 std::size_t output_size(std::size_t input_size, int operation_type) {
@@ -462,15 +475,23 @@ std::size_t output_size(std::size_t input_size, int operation_type) {
     return 0;
 }
 
-int encrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept {
+int encrypt_into_with_exponent(ConstBuffer key,
+                               ConstBuffer input,
+                               std::uint32_t deterministic_exponent,
+                               MutBuffer* output) noexcept {
     if (output == nullptr || (key.data == nullptr && key.size != 0) ||
         (input.data == nullptr && input.size != 0)) return 0;
     const std::size_t required = output_size(input.size, CIPHER_OPERATION_ENCRYPT);
     if (required == 0 || output->data == nullptr || output->size < required) return 0;
     std::uint8_t* temporary = nullptr;
     std::size_t temporary_size = 0;
-    if (encrypt_alloc(key.data, key.size, input.data, input.size,
-                      &temporary, &temporary_size) == 0) return 0;
+    try {
+        if (encrypt_impl(key.data, key.size, input.data, input.size,
+                         &temporary, &temporary_size,
+                         deterministic_exponent) == 0) return 0;
+    } catch (...) {
+        return 0;
+    }
     if (temporary_size > output->size) {
         free_buffer_impl(temporary, temporary_size);
         return 0;
@@ -479,6 +500,10 @@ int encrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept
     output->size = temporary_size;
     free_buffer_impl(temporary, temporary_size);
     return 1;
+}
+
+int encrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept {
+    return encrypt_into_with_exponent(key, input, 0, output);
 }
 
 int decrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept {
@@ -523,10 +548,35 @@ extern "C" CIPHER_MODULE_EXPORT int generate_keys(
                                decryption_key_size);
 }
 
+#ifdef CIPHER_MODULE_TESTING
+extern "C" CIPHER_MODULE_EXPORT int generate_keys_for_test(
+    const std::uint8_t* parameters, std::size_t parameters_size,
+    std::uint8_t** encryption_key, std::size_t* encryption_key_size,
+    std::uint8_t** decryption_key, std::size_t* decryption_key_size) {
+    try {
+        if (parameters == nullptr || parameters_size != sizeof(std::uint32_t)) return 0;
+        return generate_keys_impl(parameters, parameters_size, encryption_key,
+                                  encryption_key_size, decryption_key,
+                                  decryption_key_size);
+    } catch (...) {
+        return 0;
+    }
+}
+#endif
+
 extern "C" CIPHER_MODULE_EXPORT int encrypt(
     ConstBuffer key, ConstBuffer input, MutBuffer* output) {
     return encrypt_into(key, input, output);
 }
+
+#ifdef CIPHER_MODULE_TESTING
+extern "C" CIPHER_MODULE_EXPORT int encrypt_for_test(
+    ConstBuffer key, ConstBuffer input, std::uint32_t deterministic_exponent,
+    MutBuffer* output) {
+    if (deterministic_exponent == 0) return 0;
+    return encrypt_into_with_exponent(key, input, deterministic_exponent, output);
+}
+#endif
 
 extern "C" CIPHER_MODULE_EXPORT int decrypt(
     ConstBuffer key, ConstBuffer input, MutBuffer* output) {

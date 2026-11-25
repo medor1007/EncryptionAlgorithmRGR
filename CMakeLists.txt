@@ -64,7 +64,7 @@ endif()
 function(enable_strict_warnings target_name)
     target_compile_options(${target_name} PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Werror>
-        $<$<CXX_COMPILER_ID:MSVC>:/W4;/WX>
+        $<$<CXX_COMPILER_ID:MSVC>:/W4;/WX;/utf-8>
     )
 endfunction()
 
@@ -74,6 +74,9 @@ enable_strict_warnings(cipher_elgamal)
 
 include(CTest)
 if(BUILD_TESTING)
+    target_compile_definitions(cipher_hill PRIVATE CIPHER_MODULE_TESTING)
+    target_compile_definitions(cipher_elgamal PRIVATE CIPHER_MODULE_TESTING)
+
     add_executable(crypto_tests
         tests/cipher_module_test.cpp
         src/core/dynamic_library.cpp

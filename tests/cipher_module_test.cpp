@@ -1,6 +1,7 @@
 #include "core/cipher_module.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -40,7 +41,9 @@ bool transform(const CipherModuleApi* api,
     const ConstBuffer key_buffer{key.data(), key.size()};
     const ConstBuffer input_buffer{input, input_size};
     const int succeeded = encrypting
-        ? api->encrypt(key_buffer, input_buffer, &output_buffer)
+        ? (api->encrypt_for_test != nullptr
+               ? api->encrypt_for_test(key_buffer, input_buffer, 17, &output_buffer)
+               : api->encrypt(key_buffer, input_buffer, &output_buffer))
         : api->decrypt(key_buffer, input_buffer, &output_buffer);
     if (succeeded == 0) {
         api->free_buffer(output.data, output.size);
@@ -62,6 +65,15 @@ bool check_round_trip(const CipherModuleApi* api,
     if (!transform(api, true, encryption_key, plaintext.data(),
                    plaintext.size(), encrypted)) {
         std::cerr << "Ошибка шифрования: " << case_name << '\n';
+        return false;
+    }
+    ModuleBuffer repeated_encryption{api};
+    if (!transform(api, true, encryption_key, plaintext.data(),
+                   plaintext.size(), repeated_encryption) ||
+        repeated_encryption.size != encrypted.size ||
+        !std::equal(encrypted.data, encrypted.data + encrypted.size,
+                    repeated_encryption.data)) {
+        std::cerr << "Операция тестирования не детерминирована: " << case_name << '\n';
         return false;
     }
 
@@ -151,26 +163,44 @@ bool check_module(const std::string& library_path) {
     ModuleBuffer decryption_key{api};
     std::size_t encryption_key_size = 0;
     std::size_t decryption_key_size = 0;
-    if (api->generate_keys(nullptr, 0,
-                           &encryption_key.data, &encryption_key_size,
-                           &decryption_key.data, &decryption_key_size) == 0) {
+    std::array<std::uint8_t, 4> fixed_private_exponent{2, 0, 0, 0};
+    const int generated = api->generate_keys_for_test != nullptr
+        ? api->generate_keys_for_test(fixed_private_exponent.data(),
+                                      fixed_private_exponent.size(),
+                                      &encryption_key.data, &encryption_key_size,
+                                      &decryption_key.data, &decryption_key_size)
+        : api->generate_keys(nullptr, 0,
+                             &encryption_key.data, &encryption_key_size,
+                             &decryption_key.data, &decryption_key_size);
+    if (generated == 0) {
         std::cerr << "Не удалось создать ключи для «" << module.name() << "».\n";
         return false;
     }
     encryption_key.size = encryption_key_size;
     decryption_key.size = decryption_key_size;
 
-    const std::vector<std::uint8_t> public_key(
+    std::vector<std::uint8_t> public_key(
         encryption_key.data, encryption_key.data + encryption_key_size);
-    const std::vector<std::uint8_t> private_key(
+    std::vector<std::uint8_t> private_key(
         decryption_key.data, decryption_key.data + decryption_key_size);
+    if (std::string(module.name()).find("Хилл") != std::string::npos) {
+        public_key = {1, 3, 2, 5};
+        private_key = {251, 3, 2, 255};
+    }
     ModuleBuffer other_public_key{api};
     ModuleBuffer other_private_key{api};
     std::size_t other_public_key_size = 0;
     std::size_t other_private_key_size = 0;
-    if (api->generate_keys(nullptr, 0,
-                           &other_public_key.data, &other_public_key_size,
-                           &other_private_key.data, &other_private_key_size) == 0) {
+    fixed_private_exponent[0] = 3;
+    const int generated_other = api->generate_keys_for_test != nullptr
+        ? api->generate_keys_for_test(fixed_private_exponent.data(),
+                                      fixed_private_exponent.size(),
+                                      &other_public_key.data, &other_public_key_size,
+                                      &other_private_key.data, &other_private_key_size)
+        : api->generate_keys(nullptr, 0,
+                             &other_public_key.data, &other_public_key_size,
+                             &other_private_key.data, &other_private_key_size);
+    if (generated_other == 0) {
         std::cerr << "Не удалось создать дополнительную пару ключей для проверки.\n";
         return false;
     }
