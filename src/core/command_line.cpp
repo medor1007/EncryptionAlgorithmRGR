@@ -13,7 +13,6 @@ const std::unordered_map<std::string, std::string> ALIASES{
     {"-g", "--generate-key"},
     {"-s", "--save-key"},
     {"-w", "--write-key"},
-    {"-u", "--menu"},
     {"-h", "--help"},
 };
 
@@ -32,7 +31,7 @@ bool assign_value(int& index,
     return true;
 }
 
-}  // namespace
+}
 
 ParseResult parse_command_line(int argc,
                                char* argv[],
@@ -108,8 +107,6 @@ ParseResult parse_command_line(int argc,
             options.save_key_path = value;
         } else if (option == "--write-key") {
             options.write_key = true;
-        } else if (option == "--menu") {
-            options.menu = true;
         } else {
             error = "Неизвестный аргумент «" + std::string(argv[index]) + "».";
             return ParseResult::Error;
@@ -124,13 +121,6 @@ ParseResult parse_command_line(int argc,
 
     // Справка имеет приоритет над любыми конфликтующими аргументами.
     if (options.help) return ParseResult::Help;
-    if (options.menu) {
-        if (argc != 2) {
-            error = "Флаг --menu нельзя сочетать с другими аргументами.";
-            return ParseResult::Error;
-        }
-        return ParseResult::Ready;
-    }
     if (options.algorithm.empty() || !options.mode_set) {
         error = "Необходимо указать алгоритм и режим работы.";
         return ParseResult::Error;
@@ -203,7 +193,6 @@ std::string command_line_help(const char* executable_name) {
            "  -g, --generate-key         создать ключи перед шифрованием\n"
            "  -s, --save-key PATH        сохранить сгенерированную пару ключей\n"
            "  -w, --write-key            вывести пару ключей в стандартный поток\n\n"
-           "  -u, --menu                 открыть интерактивное меню\n\n"
            "Примеры:\n"
            "  " + program + " -a hill -m generate-key -s hill.keys\n"
            "  " + program + " --algorithm elgamal --mode encrypt --key keys.bin "

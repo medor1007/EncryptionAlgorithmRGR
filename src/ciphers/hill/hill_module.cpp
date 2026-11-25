@@ -574,7 +574,7 @@ int decrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) {
     return 1;
 }
 
-}  // Анонимное пространство имён.
+}
 
 extern "C" CIPHER_MODULE_EXPORT const AlgorithmInfo* get_algorithm_info(void) {
     static const AlgorithmInfo INFORMATION{

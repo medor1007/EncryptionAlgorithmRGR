@@ -14,7 +14,7 @@ test: all
 	ctest --test-dir "$(BUILD_DIR)" --output-on-failure
 
 clean:
-	$(CMAKE) -E rm -rf "$(BUILD_DIR)"
+	$(CMAKE) -E remove_directory "$(BUILD_DIR)"
 
 install: all
 	$(SUDO) ./install.sh

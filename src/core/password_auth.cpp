@@ -22,7 +22,6 @@
 
 namespace {
 
-// Параметры записи пароля.
 constexpr int ITERATIONS = 600000;
 constexpr std::size_t SALT_SIZE = 16;
 constexpr std::size_t HASH_SIZE = 32;
@@ -57,7 +56,6 @@ struct StringWiper {
     }
 };
 
-// Преобразование двоичных данных для файла настроек.
 std::string to_hex(const unsigned char* bytes, std::size_t size) {
     static constexpr char HEX_DIGITS[] = "0123456789abcdef";
     std::string result;
@@ -97,7 +95,6 @@ bool derive_hash(const std::string& password,
                              EVP_sha256(), static_cast<int>(HASH_SIZE), hash) == 1;
 }
 
-// Ввод пароля без отображения символов.
 std::string read_password(const std::string& prompt, std::string& error) {
 #ifdef _WIN32
     HANDLE console = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
@@ -156,7 +153,6 @@ std::string read_password(const std::string& prompt, std::string& error) {
     return password;
 }
 
-// Создание локального файла с хешем пароля.
 bool save_record(const std::filesystem::path& path,
                  const std::string& record,
                  std::string& error) {
@@ -195,7 +191,7 @@ bool save_record(const std::filesystem::path& path,
     return true;
 }
 
-}  // namespace
+}
 
 bool create_password_record(const std::filesystem::path& path,
                             const std::string& password,
@@ -221,7 +217,6 @@ bool create_password_record(const std::filesystem::path& path,
     return save_record(path, record, error);
 }
 
-// Проверка введённого пароля по сохранённому хешу.
 bool verify_password_record(const std::filesystem::path& path,
                             const std::string& password,
                             std::string& error) {

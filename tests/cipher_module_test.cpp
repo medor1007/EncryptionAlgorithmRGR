@@ -374,7 +374,7 @@ bool check_module(const std::string& library_path) {
     return true;
 }
 
-}  // Анонимное пространство имён.
+}
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
