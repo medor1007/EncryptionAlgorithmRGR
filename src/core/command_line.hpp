@@ -12,6 +12,7 @@ enum class OperationMode {
 
 struct CommandLineOptions {
     bool help = false;
+    bool menu = false;
     std::string algorithm;
     OperationMode mode = OperationMode::Encrypt;
     bool mode_set = false;

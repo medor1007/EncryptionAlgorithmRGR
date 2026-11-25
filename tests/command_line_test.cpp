@@ -31,7 +31,7 @@ bool parse(const std::vector<std::string>& arguments,
 int main() {
     std::cout << "Проверка аргументов командной строки\n";
     int passed = 0;
-    constexpr int TOTAL = 9;
+    constexpr int TOTAL = 10;
     passed += parse({"encryption_rgr"}, ParseResult::Help, "справка без аргументов");
     passed += parse({"encryption_rgr", "--unknown", "--help"},
                     ParseResult::Help, "справка при конфликтующих аргументах");
@@ -52,8 +52,10 @@ int main() {
     passed += parse({"encryption_rgr", "--algorithm", "hill", "--mode", "encrypt",
                      "--key", "-", "--input", "-"},
                     ParseResult::Error, "отклонение конфликтующего стандартного ввода");
-    passed += parse({"encryption_rgr", "--menu"}, ParseResult::Error,
-                    "отклонение аргумента вне технического задания");
+    passed += parse({"encryption_rgr", "--menu"}, ParseResult::Ready,
+                    "запуск интерактивного меню");
+    passed += parse({"encryption_rgr", "--menu", "--algorithm", "hill"},
+                    ParseResult::Error, "отклонение сочетания меню с другими флагами");
     std::cout << "Пройдено проверок: " << passed << " из " << TOTAL << '\n';
     return passed == TOTAL ? 0 : 1;
 }

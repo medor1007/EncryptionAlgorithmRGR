@@ -427,6 +427,111 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     return 0;
 }
 
+int read_menu_choice(int minimum, int maximum) {
+    while (true) {
+        std::cout << "Выберите пункт: ";
+        std::string value;
+        if (!std::getline(std::cin, value)) return -1;
+        try {
+            std::size_t parsed = 0;
+            const int choice = std::stoi(value, &parsed);
+            if (parsed == value.size() && choice >= minimum && choice <= maximum) {
+                return choice;
+            }
+        } catch (const std::exception&) {
+        }
+        std::cout << "Введите число от " << minimum << " до " << maximum << ".\n";
+    }
+}
+
+std::string read_menu_path(const std::string& prompt, const std::string& default_path) {
+    std::cout << prompt << " [" << default_path << "]: ";
+    std::string path;
+    if (!std::getline(std::cin, path) || path.empty()) return default_path;
+    return path;
+}
+
+int run_interactive_menu(const char* executable_path) {
+    while (true) {
+        std::cout << "\nПрограмма шифрования и расшифрования\n"
+                  << "1. Шифр Хилла\n"
+                  << "2. Шифр Эль-Гамаля\n"
+                  << "0. Выход\n";
+        const int algorithm_choice = read_menu_choice(0, 2);
+        if (algorithm_choice < 0) return 1;
+        if (algorithm_choice == 0) {
+            std::cout << "Вы вышли из программы.\n";
+            return 0;
+        }
+
+        const std::string algorithm = algorithm_choice == 1 ? "hill" : "elgamal";
+        const std::string default_key_path = "keys/" + algorithm + ".keys.bin";
+        while (true) {
+            std::cout << "\nВыбран шифр: "
+                      << (algorithm_choice == 1 ? "Хилла" : "Эль-Гамаля") << "\n"
+                      << "1. Зашифровать файл\n"
+                      << "2. Расшифровать файл\n"
+                      << "3. Создать пару ключей\n"
+                      << "0. Назад\n";
+            const int operation_choice = read_menu_choice(0, 3);
+            if (operation_choice < 0) return 1;
+            if (operation_choice == 0) break;
+
+            CommandLineOptions options;
+            options.algorithm = algorithm;
+            if (operation_choice == 3) {
+                options.mode = OperationMode::GenerateKey;
+                options.mode_set = true;
+                options.save_key_path = read_menu_path(
+                    "Куда сохранить пару ключей", default_key_path);
+                if (execute_cli(options, executable_path) == 0) {
+                    std::cout << "Пара ключей сохранена в «"
+                              << options.save_key_path << "».\n";
+                }
+                continue;
+            }
+
+            options.mode = operation_choice == 1
+                ? OperationMode::Encrypt : OperationMode::Decrypt;
+            options.mode_set = true;
+            options.key_path = read_menu_path("Файл пары ключей", default_key_path);
+            if (options.key_path == "-") {
+                std::cerr << "В меню укажите путь к файлу ключей.\n";
+                continue;
+            }
+            std::error_code filesystem_error;
+            const bool key_exists = std::filesystem::exists(options.key_path, filesystem_error);
+            if (filesystem_error) {
+                std::cerr << "Не удалось проверить файл ключей: "
+                          << filesystem_error.message() << '\n';
+                continue;
+            }
+            if (operation_choice == 1 && !key_exists) {
+                CommandLineOptions key_options;
+                key_options.algorithm = algorithm;
+                key_options.mode = OperationMode::GenerateKey;
+                key_options.mode_set = true;
+                key_options.save_key_path = options.key_path;
+                if (execute_cli(key_options, executable_path) != 0) continue;
+                std::cout << "Для шифрования автоматически создана пара ключей.\n";
+            } else if (!key_exists) {
+                std::cerr << "Файл ключей не найден. Сначала выполните шифрование или создайте пару ключей.\n";
+                continue;
+            }
+
+            options.input_path = read_menu_path(
+                operation_choice == 1 ? "Файл с исходными данными" : "Файл с шифротекстом",
+                operation_choice == 1 ? "input.txt" : "encrypted.bin");
+            options.output_path = read_menu_path(
+                "Файл для результата",
+                operation_choice == 1 ? "encrypted.bin" : "decrypted.bin");
+            if (execute_cli(options, executable_path) == 0) {
+                std::cout << "Результат записан в «" << options.output_path << "».\n";
+            }
+        }
+    }
+}
+
 }
 
 int main(int argc, char* argv[]) {
@@ -455,6 +560,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     try {
+        if (options.menu) return run_interactive_menu(executable_path);
         return execute_cli(options, executable_path);
     } catch (const std::exception& exception) {
         std::cerr << "Операция прервана из-за ошибки: " << exception.what() << '\n';
