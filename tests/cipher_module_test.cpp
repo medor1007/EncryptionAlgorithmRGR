@@ -212,6 +212,10 @@ bool check_module(const std::string& library_path) {
         0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff, 0x00, 0xc3, 0xa9, 0x0a};
     const std::string text = "Проверка шифрования: Hello, 2026!";
     const std::vector<std::uint8_t> text_data(text.begin(), text.end());
+    std::vector<std::uint8_t> boundary_data(509);
+    for (std::size_t index = 0; index < boundary_data.size(); ++index) {
+        boundary_data[index] = static_cast<std::uint8_t>(index & 0xff);
+    }
     if (!check_round_trip(api, public_key, private_key,
                           text_data, "текст UTF-8",
                           &other_private_key_bytes)) {
@@ -224,6 +228,10 @@ bool check_module(const std::string& library_path) {
     }
     if (!check_round_trip(api, public_key, private_key,
                           {}, "пустые данные")) {
+        return false;
+    }
+    if (!check_round_trip(api, public_key, private_key,
+                          boundary_data, "граничная длина блока")) {
         return false;
     }
 
@@ -316,6 +324,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "Пройдено проверок: 6 из 6\n";
+    std::cout << "Пройдено проверок: 8 из 8\n";
     return 0;
 }
