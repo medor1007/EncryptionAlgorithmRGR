@@ -340,6 +340,11 @@ bool write_cli_bytes(const std::string& path,
 }
 
 int execute_cli(const CommandLineOptions& options, const char* executable_path) {
+    std::string path_error;
+    if (!validate_file_paths(options, path_error)) {
+        std::cerr << path_error << '\n';
+        return 2;
+    }
     const Cipher cipher = options.algorithm == "hill" ? Cipher::Hill : Cipher::ElGamal;
     CipherModule module;
     std::string error;
@@ -499,6 +504,21 @@ int run_interactive_menu(const char* executable_path) {
                 std::cerr << "В меню укажите путь к файлу ключей.\n";
                 continue;
             }
+            options.input_path = read_menu_path(
+                operation_choice == 1 ? "Файл с исходными данными" : "Файл с шифротекстом",
+                operation_choice == 1 ? "input.txt" : "encrypted.bin");
+            options.output_path = read_menu_path(
+                "Файл для результата",
+                operation_choice == 1 ? "encrypted.bin" : "decrypted.bin");
+            std::string path_error;
+            if (options.input_path == "-" || options.output_path == "-") {
+                std::cerr << "В меню укажите пути к входному и выходному файлам.\n";
+                continue;
+            }
+            if (!validate_file_paths(options, path_error)) {
+                std::cerr << path_error << '\n';
+                continue;
+            }
             std::error_code filesystem_error;
             const bool key_exists = std::filesystem::exists(options.key_path, filesystem_error);
             if (filesystem_error) {
@@ -519,12 +539,6 @@ int run_interactive_menu(const char* executable_path) {
                 continue;
             }
 
-            options.input_path = read_menu_path(
-                operation_choice == 1 ? "Файл с исходными данными" : "Файл с шифротекстом",
-                operation_choice == 1 ? "input.txt" : "encrypted.bin");
-            options.output_path = read_menu_path(
-                "Файл для результата",
-                operation_choice == 1 ? "encrypted.bin" : "decrypted.bin");
             if (execute_cli(options, executable_path) == 0) {
                 std::cout << "Результат записан в «" << options.output_path << "».\n";
             }

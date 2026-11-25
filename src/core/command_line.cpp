@@ -1,6 +1,9 @@
 #include "core/command_line.hpp"
 
 #include <unordered_map>
+#include <filesystem>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -32,6 +35,48 @@ bool assign_value(int& index,
     return true;
 }
 
+}
+
+bool validate_file_paths(const CommandLineOptions& options, std::string& error) {
+    const auto same_file = [](const std::string& first, const std::string& second) {
+        std::error_code filesystem_error;
+        if (std::filesystem::equivalent(first, second, filesystem_error) &&
+            !filesystem_error) return true;
+        filesystem_error.clear();
+        const auto first_path = std::filesystem::weakly_canonical(first, filesystem_error);
+        if (filesystem_error) return false;
+        const auto second_path = std::filesystem::weakly_canonical(second, filesystem_error);
+        return !filesystem_error && first_path == second_path;
+    };
+    const std::vector<std::pair<std::string, std::string>> paths{
+        {"входных данных", options.mode == OperationMode::GenerateKey ? "" : options.input_path},
+        {"результата", options.mode == OperationMode::GenerateKey ? "" : options.output_path},
+        {"ключа", options.key_path},
+        {"новой пары ключей", options.save_key_path},
+    };
+    for (std::size_t first = 0; first < paths.size(); ++first) {
+        if (paths[first].second.empty() || paths[first].second == "-") continue;
+        for (std::size_t second = first + 1; second < paths.size(); ++second) {
+            if (paths[second].second.empty() || paths[second].second == "-") continue;
+            if (same_file(paths[first].second, paths[second].second)) {
+                error = "Пути " + paths[first].first + " и " + paths[second].first +
+                        " указывают на один файл.";
+                return false;
+            }
+        }
+    }
+    for (const auto& output : {options.save_key_path,
+                              options.mode == OperationMode::GenerateKey ? "" : options.output_path}) {
+        if (output.empty() || output == "-") continue;
+        for (const auto& input : paths) {
+            if (input.second.empty() || input.second == "-") continue;
+            if (same_file(output + ".tmp", input.second)) {
+                error = "Временный файл результата совпадает с используемым файлом.";
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 ParseResult parse_command_line(int argc,
@@ -153,6 +198,10 @@ ParseResult parse_command_line(int argc,
         return ParseResult::Ready;
     }
 
+    if (options.generate_key && !options.key_path.empty()) {
+        error = "Нельзя одновременно указывать --key и --generate-key.";
+        return ParseResult::Error;
+    }
     if (options.write_key) {
         error = "--write-key применяется только вместе с --mode generate-key.";
         return ParseResult::Error;
@@ -182,7 +231,7 @@ ParseResult parse_command_line(int argc,
         error = "Ключ и входные данные не могут одновременно читаться из стандартного ввода.";
         return ParseResult::Error;
     }
-    return ParseResult::Ready;
+    return validate_file_paths(options, error) ? ParseResult::Ready : ParseResult::Error;
 }
 
 std::string command_line_help(const char* executable_name) {

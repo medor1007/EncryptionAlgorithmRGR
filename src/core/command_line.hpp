@@ -35,6 +35,8 @@ ParseResult parse_command_line(int argc,
                                CommandLineOptions& options,
                                std::string& error);
 
+bool validate_file_paths(const CommandLineOptions& options, std::string& error);
+
 std::string command_line_help(const char* executable_name);
 
 #endif
