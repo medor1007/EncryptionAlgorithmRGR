@@ -15,13 +15,13 @@
 
 namespace {
 
-constexpr std::size_t kKeySize = 4;
-constexpr std::size_t kLegacyHeaderSize = 12;
-constexpr std::size_t kDigestSize = 32;
-constexpr std::size_t kHeaderSize = kLegacyHeaderSize + kDigestSize;
-constexpr std::array<std::uint8_t, 4> kLegacyMagic{'H', 'I', 'L', '1'};
-constexpr std::array<std::uint8_t, 4> kPreviousMagic{'H', 'I', 'L', '2'};
-constexpr std::array<std::uint8_t, 4> kMagic{'H', 'I', 'L', '3'};
+constexpr std::size_t KEY_SIZE = 4;
+constexpr std::size_t LEGACY_HEADER_SIZE = 12;
+constexpr std::size_t DIGEST_SIZE = 32;
+constexpr std::size_t HEADER_SIZE = LEGACY_HEADER_SIZE + DIGEST_SIZE;
+constexpr std::array<std::uint8_t, 4> LEGACY_MAGIC{'H', 'I', 'L', '1'};
+constexpr std::array<std::uint8_t, 4> PREVIOUS_MAGIC{'H', 'I', 'L', '2'};
+constexpr std::array<std::uint8_t, 4> MAGIC{'H', 'I', 'L', '3'};
 
 struct MemoryWiper {
     void* data;
@@ -137,9 +137,9 @@ std::uint8_t mod_256(int value) {
 
 bool calculate_digest(const std::uint8_t* data,
                       std::size_t size,
-                      std::array<std::uint8_t, kDigestSize>& digest) {
-    static const std::uint8_t empty_data = 0;
-    const std::uint8_t* source = size == 0 ? &empty_data : data;
+                      std::array<std::uint8_t, DIGEST_SIZE>& digest) {
+    static const std::uint8_t EMPTY_DATA = 0;
+    const std::uint8_t* source = size == 0 ? &EMPTY_DATA : data;
     unsigned int digest_size = 0;
     return EVP_Digest(source, size, digest.data(), &digest_size,
                       EVP_sha256(), nullptr) == 1 && digest_size == digest.size();
@@ -182,8 +182,8 @@ int generate_keys_alloc(const std::uint8_t* parameters,
     *decryption_key_size = 0;
 
     try {
-        std::array<std::uint8_t, kKeySize> key{};
-        std::array<std::uint8_t, kKeySize> inverse{};
+        std::array<std::uint8_t, KEY_SIZE> key{};
+        std::array<std::uint8_t, KEY_SIZE> inverse{};
         MemoryWiper key_wiper{key.data(), key.size()};
         MemoryWiper inverse_wiper{inverse.data(), inverse.size()};
         int determinant_inverse = 0;
@@ -222,7 +222,7 @@ int encrypt_alloc(const std::uint8_t* key,
             std::size_t input_size,
             std::uint8_t** output,
             std::size_t* output_size) {
-    if (key == nullptr || key_size != kKeySize || output == nullptr ||
+    if (key == nullptr || key_size != KEY_SIZE || output == nullptr ||
         output_size == nullptr || (input == nullptr && input_size != 0) ||
         input_size > std::numeric_limits<std::uint64_t>::max()) {
         return 0;
@@ -241,26 +241,26 @@ int encrypt_alloc(const std::uint8_t* key,
         return 0;
     }
     const std::size_t padded_size = input_size + padding;
-    if (padded_size > std::numeric_limits<std::size_t>::max() - kHeaderSize) {
+    if (padded_size > std::numeric_limits<std::size_t>::max() - HEADER_SIZE) {
         return 0;
     }
-    const std::size_t result_size = kHeaderSize + padded_size;
+    const std::size_t result_size = HEADER_SIZE + padded_size;
     auto* result = static_cast<std::uint8_t*>(std::malloc(result_size));
     if (result == nullptr) {
         return 0;
     }
 
-    std::copy(kMagic.begin(), kMagic.end(), result);
+    std::copy(MAGIC.begin(), MAGIC.end(), result);
     const auto original_size = static_cast<std::uint64_t>(input_size);
     for (std::size_t i = 0; i < sizeof(original_size); ++i) {
         result[4 + i] = static_cast<std::uint8_t>((original_size >> (8 * i)) & 0xff);
     }
-    std::array<std::uint8_t, kDigestSize> digest{};
+    std::array<std::uint8_t, DIGEST_SIZE> digest{};
     if (!calculate_digest(input, input_size, digest)) {
         std::free(result);
         return 0;
     }
-    std::copy(digest.begin(), digest.end(), result + kLegacyHeaderSize);
+    std::copy(digest.begin(), digest.end(), result + LEGACY_HEADER_SIZE);
 
     for (std::size_t offset = 0; offset < padded_size; offset += 2) {
         const int first = offset < input_size
@@ -269,8 +269,8 @@ int encrypt_alloc(const std::uint8_t* key,
         const int second = offset + 1 < input_size
             ? input[offset + 1]
             : static_cast<int>(padding);
-        result[kHeaderSize + offset] = mod_256(first * key[0] + second * key[2]);
-        result[kHeaderSize + offset + 1] = mod_256(first * key[1] + second * key[3]);
+        result[HEADER_SIZE + offset] = mod_256(first * key[0] + second * key[2]);
+        result[HEADER_SIZE + offset + 1] = mod_256(first * key[1] + second * key[3]);
     }
 
     *output = result;
@@ -284,8 +284,8 @@ int decrypt_alloc(const std::uint8_t* key,
             std::size_t input_size,
             std::uint8_t** output,
             std::size_t* output_size) {
-    if (key == nullptr || key_size != kKeySize || input == nullptr ||
-        input_size < kLegacyHeaderSize || output == nullptr || output_size == nullptr) {
+    if (key == nullptr || key_size != KEY_SIZE || input == nullptr ||
+        input_size < LEGACY_HEADER_SIZE || output == nullptr || output_size == nullptr) {
         return 0;
     }
     int determinant_inverse = 0;
@@ -297,13 +297,13 @@ int decrypt_alloc(const std::uint8_t* key,
     *output = nullptr;
     *output_size = 0;
 
-    const bool is_current = std::equal(kMagic.begin(), kMagic.end(), input);
+    const bool is_current = std::equal(MAGIC.begin(), MAGIC.end(), input);
     const bool has_digest = is_current ||
-        std::equal(kPreviousMagic.begin(), kPreviousMagic.end(), input);
-    if (!has_digest && !std::equal(kLegacyMagic.begin(), kLegacyMagic.end(), input)) {
+        std::equal(PREVIOUS_MAGIC.begin(), PREVIOUS_MAGIC.end(), input);
+    if (!has_digest && !std::equal(LEGACY_MAGIC.begin(), LEGACY_MAGIC.end(), input)) {
         return 0;
     }
-    const std::size_t header_size = has_digest ? kHeaderSize : kLegacyHeaderSize;
+    const std::size_t header_size = has_digest ? HEADER_SIZE : LEGACY_HEADER_SIZE;
     if (input_size < header_size) {
         return 0;
     }
@@ -352,9 +352,9 @@ int decrypt_alloc(const std::uint8_t* key,
     }
 
     if (has_digest) {
-        std::array<std::uint8_t, kDigestSize> digest{};
+        std::array<std::uint8_t, DIGEST_SIZE> digest{};
         if (!calculate_digest(plaintext, plaintext_size, digest) ||
-            !std::equal(digest.begin(), digest.end(), input + kLegacyHeaderSize)) {
+            !std::equal(digest.begin(), digest.end(), input + LEGACY_HEADER_SIZE)) {
             if (plaintext_size != 0) OPENSSL_cleanse(plaintext, plaintext_size);
             std::free(plaintext);
             return 0;
@@ -393,7 +393,7 @@ int encrypt_stream_impl(ConstBuffer key,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,
                         void* context) {
-    if (key.data == nullptr || key.size != kKeySize || input_digest == nullptr ||
+    if (key.data == nullptr || key.size != KEY_SIZE || input_digest == nullptr ||
         read_callback == nullptr || write_callback == nullptr ||
         input_size > std::numeric_limits<std::size_t>::max()) return 0;
     int determinant_inverse = 0;
@@ -401,12 +401,12 @@ int encrypt_stream_impl(ConstBuffer key,
                          static_cast<int>(key.data[1]) * key.data[2],
                          determinant_inverse)) return 0;
 
-    std::array<std::uint8_t, kHeaderSize> header{};
-    std::copy(kMagic.begin(), kMagic.end(), header.begin());
+    std::array<std::uint8_t, HEADER_SIZE> header{};
+    std::copy(MAGIC.begin(), MAGIC.end(), header.begin());
     for (std::size_t index = 0; index < sizeof(input_size); ++index) {
         header[4 + index] = static_cast<std::uint8_t>(input_size >> (index * 8));
     }
-    std::copy_n(input_digest, kDigestSize, header.begin() + kLegacyHeaderSize);
+    std::copy_n(input_digest, DIGEST_SIZE, header.begin() + LEGACY_HEADER_SIZE);
     StreamReader reader(read_callback, context);
     StreamWriter writer(write_callback, context);
     if (!writer.write(header.data(), header.size())) return 0;
@@ -444,7 +444,7 @@ int decrypt_stream_impl(ConstBuffer key,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,
                         void* context) {
-    if (key.data == nullptr || key.size != kKeySize ||
+    if (key.data == nullptr || key.size != KEY_SIZE ||
         read_callback == nullptr || write_callback == nullptr) return 0;
     int determinant_inverse = 0;
     if (!inverse_mod_256(static_cast<int>(key.data[0]) * key.data[3] -
@@ -453,14 +453,14 @@ int decrypt_stream_impl(ConstBuffer key,
 
     StreamReader reader(read_callback, context);
     StreamWriter writer(write_callback, context);
-    std::array<std::uint8_t, kHeaderSize> header{};
-    if (!reader.read_exact(header.data(), kLegacyHeaderSize)) return 0;
-    const bool is_current = std::equal(kMagic.begin(), kMagic.end(), header.begin());
+    std::array<std::uint8_t, HEADER_SIZE> header{};
+    if (!reader.read_exact(header.data(), LEGACY_HEADER_SIZE)) return 0;
+    const bool is_current = std::equal(MAGIC.begin(), MAGIC.end(), header.begin());
     const bool has_digest = is_current ||
-        std::equal(kPreviousMagic.begin(), kPreviousMagic.end(), header.begin());
-    const bool is_legacy = std::equal(kLegacyMagic.begin(), kLegacyMagic.end(), header.begin());
+        std::equal(PREVIOUS_MAGIC.begin(), PREVIOUS_MAGIC.end(), header.begin());
+    const bool is_legacy = std::equal(LEGACY_MAGIC.begin(), LEGACY_MAGIC.end(), header.begin());
     if (!has_digest && !is_legacy) return 0;
-    if (has_digest && !reader.read_exact(header.data() + kLegacyHeaderSize, kDigestSize)) {
+    if (has_digest && !reader.read_exact(header.data() + LEGACY_HEADER_SIZE, DIGEST_SIZE)) {
         return 0;
     }
 
@@ -498,17 +498,17 @@ int decrypt_stream_impl(ConstBuffer key,
     }
     if (!reader.at_end()) return 0;
     if (has_digest) {
-        std::array<std::uint8_t, kDigestSize> calculated_digest{};
+        std::array<std::uint8_t, DIGEST_SIZE> calculated_digest{};
         unsigned int digest_size = 0;
         if (EVP_DigestFinal_ex(digest_context.get(), calculated_digest.data(),
                                &digest_size) != 1 || digest_size != calculated_digest.size() ||
             !std::equal(calculated_digest.begin(), calculated_digest.end(),
-                        header.begin() + kLegacyHeaderSize)) return 0;
+                        header.begin() + LEGACY_HEADER_SIZE)) return 0;
     }
     return writer.finish() ? 1 : 0;
 }
 
-const CipherModuleApi kApi{
+const CipherModuleApi API{
     CIPHER_MODULE_ABI_VERSION,
     sizeof(CipherModuleApi),
     ::get_algorithm_info,
@@ -526,10 +526,10 @@ const CipherModuleApi kApi{
 std::size_t output_size(std::size_t input_size, int operation_type) {
     if (operation_type == CIPHER_OPERATION_ENCRYPT) {
         const std::size_t padding = 2 - input_size % 2;
-        if (input_size > std::numeric_limits<std::size_t>::max() - padding - kHeaderSize) {
+        if (input_size > std::numeric_limits<std::size_t>::max() - padding - HEADER_SIZE) {
             return 0;
         }
-        return kHeaderSize + input_size + padding;
+        return HEADER_SIZE + input_size + padding;
     }
     if (operation_type == CIPHER_OPERATION_DECRYPT) return input_size;
     return 0;
@@ -577,10 +577,10 @@ int decrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) {
 }  // Анонимное пространство имён.
 
 extern "C" CIPHER_MODULE_EXPORT const AlgorithmInfo* get_algorithm_info(void) {
-    static const AlgorithmInfo information{
+    static const AlgorithmInfo INFORMATION{
         CIPHER_MODULE_ABI_VERSION, sizeof(AlgorithmInfo),
         "Шифр Хилла (байтовый вариант)", 4};
-    return &information;
+    return &INFORMATION;
 }
 
 extern "C" CIPHER_MODULE_EXPORT std::size_t get_output_size(
@@ -635,5 +635,5 @@ extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
 }
 
 extern "C" CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void) {
-    return &kApi;
+    return &API;
 }

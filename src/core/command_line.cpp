@@ -4,7 +4,7 @@
 
 namespace {
 
-const std::unordered_map<std::string, std::string> kAliases{
+const std::unordered_map<std::string, std::string> ALIASES{
     {"-a", "--algorithm"},
     {"-m", "--mode"},
     {"-k", "--key"},
@@ -61,8 +61,8 @@ ParseResult parse_command_line(int argc,
             has_inline_value = true;
         }
         if (option == "--help" || option == "-h") continue;
-        const auto alias = kAliases.find(option);
-        if (alias != kAliases.end()) {
+        const auto alias = ALIASES.find(option);
+        if (alias != ALIASES.end()) {
             option = alias->second;
         }
 

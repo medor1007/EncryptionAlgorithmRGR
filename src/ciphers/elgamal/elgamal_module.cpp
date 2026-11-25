@@ -15,19 +15,19 @@
 
 namespace {
 
-constexpr std::size_t kFieldBytes = 256;
-constexpr std::size_t kKeyBytes = 4 + 3 * kFieldBytes;
-constexpr std::size_t kLegacyContainerHeaderBytes = 12;
-constexpr std::size_t kDigestBytes = 32;
-constexpr std::size_t kContainerHeaderBytes = kLegacyContainerHeaderBytes + kDigestBytes;
-constexpr std::size_t kPlaintextBlockBytes = kFieldBytes - 2;
-constexpr std::size_t kLegacyPlaintextBlockBytes = kFieldBytes - 1;
-constexpr std::size_t kCiphertextBlockBytes = 2 * kFieldBytes;
-constexpr std::array<std::uint8_t, 4> kPublicKeyMagic{'E', 'G', 'P', '1'};
-constexpr std::array<std::uint8_t, 4> kPrivateKeyMagic{'E', 'G', 'S', '1'};
-constexpr std::array<std::uint8_t, 4> kLegacyCiphertextMagic{'E', 'L', 'G', '1'};
-constexpr std::array<std::uint8_t, 4> kPreviousCiphertextMagic{'E', 'L', 'G', '2'};
-constexpr std::array<std::uint8_t, 4> kCiphertextMagic{'E', 'L', 'G', '3'};
+constexpr std::size_t FIELD_BYTES = 256;
+constexpr std::size_t KEY_BYTES = 4 + 3 * FIELD_BYTES;
+constexpr std::size_t LEGACY_CONTAINER_HEADER_BYTES = 12;
+constexpr std::size_t DIGEST_BYTES = 32;
+constexpr std::size_t CONTAINER_HEADER_BYTES = LEGACY_CONTAINER_HEADER_BYTES + DIGEST_BYTES;
+constexpr std::size_t PLAINTEXT_BLOCK_BYTES = FIELD_BYTES - 2;
+constexpr std::size_t LEGACY_PLAINTEXT_BLOCK_BYTES = FIELD_BYTES - 1;
+constexpr std::size_t CIPHERTEXT_BLOCK_BYTES = 2 * FIELD_BYTES;
+constexpr std::array<std::uint8_t, 4> PUBLIC_KEY_MAGIC{'E', 'G', 'P', '1'};
+constexpr std::array<std::uint8_t, 4> PRIVATE_KEY_MAGIC{'E', 'G', 'S', '1'};
+constexpr std::array<std::uint8_t, 4> LEGACY_CIPHERTEXT_MAGIC{'E', 'L', 'G', '1'};
+constexpr std::array<std::uint8_t, 4> PREVIOUS_CIPHERTEXT_MAGIC{'E', 'L', 'G', '2'};
+constexpr std::array<std::uint8_t, 4> CIPHERTEXT_MAGIC{'E', 'L', 'G', '3'};
 
 struct VectorWiper {
     std::vector<std::uint8_t>& bytes;
@@ -57,9 +57,9 @@ BnContextPtr make_context() {
 
 bool calculate_digest(const std::uint8_t* data,
                       std::size_t size,
-                      std::array<std::uint8_t, kDigestBytes>& digest) {
-    static const std::uint8_t empty_data = 0;
-    const std::uint8_t* source = size == 0 ? &empty_data : data;
+                      std::array<std::uint8_t, DIGEST_BYTES>& digest) {
+    static const std::uint8_t EMPTY_DATA = 0;
+    const std::uint8_t* source = size == 0 ? &EMPTY_DATA : data;
     unsigned int digest_size = 0;
     return EVP_Digest(source, size, digest.data(), &digest_size,
                       EVP_sha256(), nullptr) == 1 && digest_size == digest.size();
@@ -67,17 +67,17 @@ bool calculate_digest(const std::uint8_t* data,
 
 bool append_bn(std::vector<std::uint8_t>& output, const BIGNUM* value) {
     const std::size_t offset = output.size();
-    output.resize(offset + kFieldBytes);
+    output.resize(offset + FIELD_BYTES);
     return BN_bn2binpad(value, output.data() + offset,
-                        static_cast<int>(kFieldBytes)) == static_cast<int>(kFieldBytes);
+                        static_cast<int>(FIELD_BYTES)) == static_cast<int>(FIELD_BYTES);
 }
 
 BnPtr read_bn(const std::uint8_t* input, std::size_t input_size, std::size_t offset) {
     if (input == nullptr || offset > input_size ||
-        input_size - offset < kFieldBytes) {
+        input_size - offset < FIELD_BYTES) {
         return BnPtr(nullptr);
     }
-    return BnPtr(BN_bin2bn(input + offset, static_cast<int>(kFieldBytes), nullptr));
+    return BnPtr(BN_bin2bn(input + offset, static_cast<int>(FIELD_BYTES), nullptr));
 }
 
 bool allocate_copy(const std::vector<std::uint8_t>& data, std::uint8_t** output) {
@@ -103,20 +103,20 @@ bool parse_key(const std::uint8_t* key,
                BnPtr& p,
                BnPtr& g,
                BnPtr& third) {
-    if (key == nullptr || key_size != kKeyBytes ||
+    if (key == nullptr || key_size != KEY_BYTES ||
         !std::equal(magic.begin(), magic.end(), key)) {
         return false;
     }
     p = read_bn(key, key_size, 4);
-    g = read_bn(key, key_size, 4 + kFieldBytes);
-    third = read_bn(key, key_size, 4 + 2 * kFieldBytes);
+    g = read_bn(key, key_size, 4 + FIELD_BYTES);
+    third = read_bn(key, key_size, 4 + 2 * FIELD_BYTES);
     if (!p || !g || !third || BN_is_zero(p.get()) || BN_is_zero(g.get()) ||
         BN_is_zero(third.get())) {
         return false;
     }
     if (BN_num_bits(p.get()) != 2048 ||
         BN_cmp(g.get(), BN_value_one()) <= 0 ||
-        (magic == kPublicKeyMagic && BN_is_one(third.get()))) {
+        (magic == PUBLIC_KEY_MAGIC && BN_is_one(third.get()))) {
         return false;
     }
     BnPtr p_minus_one = make_bn();
@@ -203,8 +203,8 @@ int generate_keys_impl(const std::uint8_t* parameters,
         return 0;
     }
 
-    std::vector<std::uint8_t> public_key(kPublicKeyMagic.begin(), kPublicKeyMagic.end());
-    std::vector<std::uint8_t> private_key(kPrivateKeyMagic.begin(), kPrivateKeyMagic.end());
+    std::vector<std::uint8_t> public_key(PUBLIC_KEY_MAGIC.begin(), PUBLIC_KEY_MAGIC.end());
+    std::vector<std::uint8_t> private_key(PRIVATE_KEY_MAGIC.begin(), PRIVATE_KEY_MAGIC.end());
     VectorWiper private_key_wiper{private_key};
     if (!append_bn(public_key, p.get()) || !append_bn(public_key, generator.get()) ||
         !append_bn(public_key, public_value.get()) || !append_bn(private_key, p.get()) ||
@@ -239,7 +239,7 @@ int encrypt_impl(const std::uint8_t* key,
     *output_size = 0;
 
     BnPtr p(nullptr), generator(nullptr), public_value(nullptr);
-    if (!parse_key(key, key_size, kPublicKeyMagic, p, generator, public_value)) {
+    if (!parse_key(key, key_size, PUBLIC_KEY_MAGIC, p, generator, public_value)) {
         return 0;
     }
     BnPtr message = make_bn();
@@ -257,26 +257,26 @@ int encrypt_impl(const std::uint8_t* key,
         return 0;
     }
 
-    const std::size_t block_count = input_size / kPlaintextBlockBytes + 1;
-    if (block_count > (std::numeric_limits<std::size_t>::max() - kContainerHeaderBytes) /
-                          kCiphertextBlockBytes) {
+    const std::size_t block_count = input_size / PLAINTEXT_BLOCK_BYTES + 1;
+    if (block_count > (std::numeric_limits<std::size_t>::max() - CONTAINER_HEADER_BYTES) /
+                          CIPHERTEXT_BLOCK_BYTES) {
         return 0;
     }
-    std::vector<std::uint8_t> result(kContainerHeaderBytes + block_count * kCiphertextBlockBytes);
-    std::copy(kCiphertextMagic.begin(), kCiphertextMagic.end(), result.begin());
+    std::vector<std::uint8_t> result(CONTAINER_HEADER_BYTES + block_count * CIPHERTEXT_BLOCK_BYTES);
+    std::copy(CIPHERTEXT_MAGIC.begin(), CIPHERTEXT_MAGIC.end(), result.begin());
     encode_length(static_cast<std::uint64_t>(input_size), result.data() + 4);
-    std::array<std::uint8_t, kDigestBytes> digest{};
+    std::array<std::uint8_t, DIGEST_BYTES> digest{};
     if (!calculate_digest(input, input_size, digest)) {
         return 0;
     }
-    std::copy(digest.begin(), digest.end(), result.begin() + kLegacyContainerHeaderBytes);
+    std::copy(digest.begin(), digest.end(), result.begin() + LEGACY_CONTAINER_HEADER_BYTES);
 
     for (std::size_t block = 0; block < block_count; ++block) {
-        const std::size_t offset = block * kPlaintextBlockBytes;
-        const std::size_t block_size = std::min(kPlaintextBlockBytes, input_size - offset);
+        const std::size_t offset = block * PLAINTEXT_BLOCK_BYTES;
+        const std::size_t block_size = std::min(PLAINTEXT_BLOCK_BYTES, input_size - offset);
         const std::uint8_t padding = static_cast<std::uint8_t>(
-            kFieldBytes - 1 - block_size);
-        std::array<std::uint8_t, kFieldBytes> encoded{};
+            FIELD_BYTES - 1 - block_size);
+        std::array<std::uint8_t, FIELD_BYTES> encoded{};
         encoded[0] = 1;
         if (block_size != 0) {
             std::copy_n(input + offset, block_size, encoded.begin() + 1);
@@ -297,11 +297,11 @@ int encrypt_impl(const std::uint8_t* key,
             return 0;
         }
 
-        const std::size_t output_offset = kContainerHeaderBytes + block * kCiphertextBlockBytes;
+        const std::size_t output_offset = CONTAINER_HEADER_BYTES + block * CIPHERTEXT_BLOCK_BYTES;
         if (BN_bn2binpad(first.get(), result.data() + output_offset,
-                         static_cast<int>(kFieldBytes)) != static_cast<int>(kFieldBytes) ||
-            BN_bn2binpad(second.get(), result.data() + output_offset + kFieldBytes,
-                         static_cast<int>(kFieldBytes)) != static_cast<int>(kFieldBytes)) {
+                         static_cast<int>(FIELD_BYTES)) != static_cast<int>(FIELD_BYTES) ||
+            BN_bn2binpad(second.get(), result.data() + output_offset + FIELD_BYTES,
+                         static_cast<int>(FIELD_BYTES)) != static_cast<int>(FIELD_BYTES)) {
             OPENSSL_cleanse(encoded.data(), encoded.size());
             return 0;
         }
@@ -322,29 +322,29 @@ int decrypt_impl(const std::uint8_t* key,
                  std::uint8_t** output,
                  std::size_t* output_size) {
     if (key == nullptr || input == nullptr ||
-        input_size < kLegacyContainerHeaderBytes ||
+        input_size < LEGACY_CONTAINER_HEADER_BYTES ||
         output == nullptr || output_size == nullptr) {
         return 0;
     }
     *output = nullptr;
     *output_size = 0;
 
-    const bool is_current = std::equal(kCiphertextMagic.begin(), kCiphertextMagic.end(), input);
+    const bool is_current = std::equal(CIPHERTEXT_MAGIC.begin(), CIPHERTEXT_MAGIC.end(), input);
     const bool has_digest = is_current ||
-        std::equal(kPreviousCiphertextMagic.begin(), kPreviousCiphertextMagic.end(), input);
+        std::equal(PREVIOUS_CIPHERTEXT_MAGIC.begin(), PREVIOUS_CIPHERTEXT_MAGIC.end(), input);
     if (!has_digest &&
-        !std::equal(kLegacyCiphertextMagic.begin(), kLegacyCiphertextMagic.end(), input)) {
+        !std::equal(LEGACY_CIPHERTEXT_MAGIC.begin(), LEGACY_CIPHERTEXT_MAGIC.end(), input)) {
         return 0;
     }
     const std::size_t header_size = has_digest
-        ? kContainerHeaderBytes
-        : kLegacyContainerHeaderBytes;
+        ? CONTAINER_HEADER_BYTES
+        : LEGACY_CONTAINER_HEADER_BYTES;
     if (input_size < header_size) {
         return 0;
     }
 
     BnPtr p(nullptr), generator(nullptr), private_exponent(nullptr);
-    if (!parse_key(key, key_size, kPrivateKeyMagic, p, generator, private_exponent)) {
+    if (!parse_key(key, key_size, PRIVATE_KEY_MAGIC, p, generator, private_exponent)) {
         return 0;
     }
 
@@ -353,15 +353,15 @@ int decrypt_impl(const std::uint8_t* key,
         return 0;
     }
     const std::size_t plaintext_size = static_cast<std::size_t>(original_size);
-    const std::size_t block_limit = is_current ? kPlaintextBlockBytes
-                                                : kLegacyPlaintextBlockBytes;
+    const std::size_t block_limit = is_current ? PLAINTEXT_BLOCK_BYTES
+                                                : LEGACY_PLAINTEXT_BLOCK_BYTES;
     const std::size_t block_count = is_current
         ? plaintext_size / block_limit + 1
         : plaintext_size / block_limit +
           (plaintext_size % block_limit != 0 ? 1 : 0);
     if (block_count > (std::numeric_limits<std::size_t>::max() - header_size) /
-                          kCiphertextBlockBytes ||
-        input_size != header_size + block_count * kCiphertextBlockBytes) {
+                          CIPHERTEXT_BLOCK_BYTES ||
+        input_size != header_size + block_count * CIPHERTEXT_BLOCK_BYTES) {
         return 0;
     }
 
@@ -374,9 +374,9 @@ int decrypt_impl(const std::uint8_t* key,
     std::vector<std::uint8_t> plaintext(plaintext_size);
     VectorWiper plaintext_wiper{plaintext};
     for (std::size_t block = 0; block < block_count; ++block) {
-        const std::size_t input_offset = header_size + block * kCiphertextBlockBytes;
+        const std::size_t input_offset = header_size + block * CIPHERTEXT_BLOCK_BYTES;
         first = read_bn(input, input_size, input_offset);
-        second = read_bn(input, input_size, input_offset + kFieldBytes);
+        second = read_bn(input, input_size, input_offset + FIELD_BYTES);
         shared = make_bn();
         message = make_bn();
         if (!first || !second || !shared || !message || BN_is_zero(first.get()) ||
@@ -390,7 +390,7 @@ int decrypt_impl(const std::uint8_t* key,
             return 0;
         }
 
-        std::array<std::uint8_t, kFieldBytes> decoded{};
+        std::array<std::uint8_t, FIELD_BYTES> decoded{};
         if (BN_bn2binpad(message.get(), decoded.data(), static_cast<int>(decoded.size())) !=
                 static_cast<int>(decoded.size()) || decoded[0] != 1) {
             OPENSSL_cleanse(decoded.data(), decoded.size());
@@ -400,7 +400,7 @@ int decrypt_impl(const std::uint8_t* key,
         const std::size_t offset = block * block_limit;
         const std::size_t block_size = std::min(block_limit, plaintext_size - offset);
         const std::uint8_t expected_padding = static_cast<std::uint8_t>(
-            kFieldBytes - 1 - block_size);
+            FIELD_BYTES - 1 - block_size);
         const auto is_padding_byte = [is_current, expected_padding](std::uint8_t byte) {
             return is_current ? byte == expected_padding : byte == 0;
         };
@@ -414,10 +414,10 @@ int decrypt_impl(const std::uint8_t* key,
     }
 
     if (has_digest) {
-        std::array<std::uint8_t, kDigestBytes> digest{};
+        std::array<std::uint8_t, DIGEST_BYTES> digest{};
         if (!calculate_digest(plaintext.data(), plaintext.size(), digest) ||
             !std::equal(digest.begin(), digest.end(),
-                        input + kLegacyContainerHeaderBytes)) {
+                        input + LEGACY_CONTAINER_HEADER_BYTES)) {
             return 0;
         }
     }
@@ -546,9 +546,9 @@ int encrypt_stream_impl(ConstBuffer key,
                         CipherWriteCallback write_callback,
                         void* context) {
     if (input_digest == nullptr || read_callback == nullptr || write_callback == nullptr ||
-        input_size > std::numeric_limits<std::uint64_t>::max() - kContainerHeaderBytes) return 0;
+        input_size > std::numeric_limits<std::uint64_t>::max() - CONTAINER_HEADER_BYTES) return 0;
     BnPtr p(nullptr), generator(nullptr), public_value(nullptr);
-    if (!parse_key(key.data, key.size, kPublicKeyMagic, p, generator, public_value)) return 0;
+    if (!parse_key(key.data, key.size, PUBLIC_KEY_MAGIC, p, generator, public_value)) return 0;
     BnPtr message = make_bn(), ephemeral = make_bn(), first = make_bn();
     BnPtr shared = make_bn(), second = make_bn(), range = make_bn();
     BnContextPtr context_bn = make_context();
@@ -557,25 +557,25 @@ int encrypt_stream_impl(ConstBuffer key,
 
     StreamReader reader(read_callback, context);
     StreamWriter writer(write_callback, context);
-    std::array<std::uint8_t, kContainerHeaderBytes> header{};
-    std::copy(kCiphertextMagic.begin(), kCiphertextMagic.end(), header.begin());
+    std::array<std::uint8_t, CONTAINER_HEADER_BYTES> header{};
+    std::copy(CIPHERTEXT_MAGIC.begin(), CIPHERTEXT_MAGIC.end(), header.begin());
     encode_length(input_size, header.data() + 4);
-    std::copy_n(input_digest, kDigestBytes,
-                header.begin() + kLegacyContainerHeaderBytes);
+    std::copy_n(input_digest, DIGEST_BYTES,
+                header.begin() + LEGACY_CONTAINER_HEADER_BYTES);
     if (!writer.write(header.data(), header.size())) return 0;
 
     std::uint64_t remaining = input_size;
-    const std::uint64_t block_count = input_size / kPlaintextBlockBytes + 1;
+    const std::uint64_t block_count = input_size / PLAINTEXT_BLOCK_BYTES + 1;
     for (std::uint64_t block = 0; block < block_count; ++block) {
         const std::size_t block_size = static_cast<std::size_t>(
-            std::min<std::uint64_t>(remaining, kPlaintextBlockBytes));
-        std::array<std::uint8_t, kFieldBytes> encoded{};
+            std::min<std::uint64_t>(remaining, PLAINTEXT_BLOCK_BYTES));
+        std::array<std::uint8_t, FIELD_BYTES> encoded{};
         encoded[0] = 1;
         if (block_size != 0 && !reader.read_exact(encoded.data() + 1, block_size)) {
             OPENSSL_cleanse(encoded.data(), encoded.size());
             return 0;
         }
-        const std::uint8_t padding = static_cast<std::uint8_t>(kFieldBytes - 1 - block_size);
+        const std::uint8_t padding = static_cast<std::uint8_t>(FIELD_BYTES - 1 - block_size);
         std::fill(encoded.begin() + static_cast<std::ptrdiff_t>(1 + block_size),
                   encoded.end(), padding);
         if (BN_bin2bn(encoded.data(), static_cast<int>(encoded.size()), message.get()) == nullptr ||
@@ -587,12 +587,12 @@ int encrypt_stream_impl(ConstBuffer key,
             OPENSSL_cleanse(encoded.data(), encoded.size());
             return 0;
         }
-        std::array<std::uint8_t, kCiphertextBlockBytes> encrypted{};
+        std::array<std::uint8_t, CIPHERTEXT_BLOCK_BYTES> encrypted{};
         const bool encoded_ok =
-            BN_bn2binpad(first.get(), encrypted.data(), static_cast<int>(kFieldBytes)) ==
-                static_cast<int>(kFieldBytes) &&
-            BN_bn2binpad(second.get(), encrypted.data() + kFieldBytes,
-                         static_cast<int>(kFieldBytes)) == static_cast<int>(kFieldBytes);
+            BN_bn2binpad(first.get(), encrypted.data(), static_cast<int>(FIELD_BYTES)) ==
+                static_cast<int>(FIELD_BYTES) &&
+            BN_bn2binpad(second.get(), encrypted.data() + FIELD_BYTES,
+                         static_cast<int>(FIELD_BYTES)) == static_cast<int>(FIELD_BYTES);
         OPENSSL_cleanse(encoded.data(), encoded.size());
         if (!encoded_ok || !writer.write(encrypted.data(), encrypted.size())) return 0;
         remaining -= block_size;
@@ -606,25 +606,25 @@ int decrypt_stream_impl(ConstBuffer key,
                         void* context) {
     if (read_callback == nullptr || write_callback == nullptr) return 0;
     BnPtr p(nullptr), generator(nullptr), private_exponent(nullptr);
-    if (!parse_key(key.data, key.size, kPrivateKeyMagic, p, generator, private_exponent)) return 0;
+    if (!parse_key(key.data, key.size, PRIVATE_KEY_MAGIC, p, generator, private_exponent)) return 0;
     StreamReader reader(read_callback, context);
     StreamWriter writer(write_callback, context);
-    std::array<std::uint8_t, kContainerHeaderBytes> header{};
-    if (!reader.read_exact(header.data(), kLegacyContainerHeaderBytes)) return 0;
-    const bool is_current = std::equal(kCiphertextMagic.begin(), kCiphertextMagic.end(), header.begin());
+    std::array<std::uint8_t, CONTAINER_HEADER_BYTES> header{};
+    if (!reader.read_exact(header.data(), LEGACY_CONTAINER_HEADER_BYTES)) return 0;
+    const bool is_current = std::equal(CIPHERTEXT_MAGIC.begin(), CIPHERTEXT_MAGIC.end(), header.begin());
     const bool has_digest = is_current ||
-        std::equal(kPreviousCiphertextMagic.begin(), kPreviousCiphertextMagic.end(), header.begin());
-    const bool is_legacy = std::equal(kLegacyCiphertextMagic.begin(), kLegacyCiphertextMagic.end(), header.begin());
+        std::equal(PREVIOUS_CIPHERTEXT_MAGIC.begin(), PREVIOUS_CIPHERTEXT_MAGIC.end(), header.begin());
+    const bool is_legacy = std::equal(LEGACY_CIPHERTEXT_MAGIC.begin(), LEGACY_CIPHERTEXT_MAGIC.end(), header.begin());
     if (!has_digest && !is_legacy) return 0;
-    if (has_digest && !reader.read_exact(header.data() + kLegacyContainerHeaderBytes,
-                                         kDigestBytes)) return 0;
+    if (has_digest && !reader.read_exact(header.data() + LEGACY_CONTAINER_HEADER_BYTES,
+                                         DIGEST_BYTES)) return 0;
     const std::uint64_t original_size = decode_length(header.data() + 4);
-    const std::uint64_t block_limit = is_current ? kPlaintextBlockBytes
-                                                  : kLegacyPlaintextBlockBytes;
+    const std::uint64_t block_limit = is_current ? PLAINTEXT_BLOCK_BYTES
+                                                  : LEGACY_PLAINTEXT_BLOCK_BYTES;
     const std::uint64_t block_count = is_current
         ? original_size / block_limit + 1
         : original_size / block_limit + (original_size % block_limit != 0 ? 1 : 0);
-    if (block_count > std::numeric_limits<std::uint64_t>::max() / kCiphertextBlockBytes) return 0;
+    if (block_count > std::numeric_limits<std::uint64_t>::max() / CIPHERTEXT_BLOCK_BYTES) return 0;
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digest_context(
         has_digest ? EVP_MD_CTX_new() : nullptr, EVP_MD_CTX_free);
     if (has_digest && (!digest_context ||
@@ -635,16 +635,16 @@ int decrypt_stream_impl(ConstBuffer key,
     if (!first || !second || !shared || !message || !bn_context) return 0;
 
     for (std::uint64_t block = 0; block < block_count; ++block) {
-        std::array<std::uint8_t, kCiphertextBlockBytes> encrypted{};
+        std::array<std::uint8_t, CIPHERTEXT_BLOCK_BYTES> encrypted{};
         if (!reader.read_exact(encrypted.data(), encrypted.size()) ||
-            BN_bin2bn(encrypted.data(), static_cast<int>(kFieldBytes), first.get()) == nullptr ||
-            BN_bin2bn(encrypted.data() + kFieldBytes, static_cast<int>(kFieldBytes), second.get()) == nullptr ||
+            BN_bin2bn(encrypted.data(), static_cast<int>(FIELD_BYTES), first.get()) == nullptr ||
+            BN_bin2bn(encrypted.data() + FIELD_BYTES, static_cast<int>(FIELD_BYTES), second.get()) == nullptr ||
             BN_is_zero(first.get()) || BN_cmp(first.get(), p.get()) >= 0 ||
             BN_cmp(second.get(), p.get()) >= 0 ||
             BN_mod_exp(shared.get(), first.get(), private_exponent.get(), p.get(), bn_context.get()) != 1) return 0;
         inverse.reset(BN_mod_inverse(nullptr, shared.get(), p.get(), bn_context.get()));
         if (!inverse || BN_mod_mul(message.get(), second.get(), inverse.get(), p.get(), bn_context.get()) != 1) return 0;
-        std::array<std::uint8_t, kFieldBytes> decoded{};
+        std::array<std::uint8_t, FIELD_BYTES> decoded{};
         if (BN_bn2binpad(message.get(), decoded.data(), static_cast<int>(decoded.size())) !=
                 static_cast<int>(decoded.size()) || decoded[0] != 1) {
             OPENSSL_cleanse(decoded.data(), decoded.size());
@@ -653,7 +653,7 @@ int decrypt_stream_impl(ConstBuffer key,
         const std::uint64_t offset = block * block_limit;
         const std::size_t block_size = static_cast<std::size_t>(
             std::min<std::uint64_t>(block_limit, original_size - offset));
-        const std::uint8_t expected_padding = static_cast<std::uint8_t>(kFieldBytes - 1 - block_size);
+        const std::uint8_t expected_padding = static_cast<std::uint8_t>(FIELD_BYTES - 1 - block_size);
         const auto valid_padding = [is_current, expected_padding](std::uint8_t byte) {
             return is_current ? byte == expected_padding : byte == 0;
         };
@@ -667,16 +667,16 @@ int decrypt_stream_impl(ConstBuffer key,
     }
     if (!reader.at_end()) return 0;
     if (has_digest) {
-        std::array<std::uint8_t, kDigestBytes> digest{};
+        std::array<std::uint8_t, DIGEST_BYTES> digest{};
         unsigned int digest_size = 0;
         if (EVP_DigestFinal_ex(digest_context.get(), digest.data(), &digest_size) != 1 ||
             digest_size != digest.size() || !std::equal(digest.begin(), digest.end(),
-                header.begin() + kLegacyContainerHeaderBytes)) return 0;
+                header.begin() + LEGACY_CONTAINER_HEADER_BYTES)) return 0;
     }
     return writer.finish() ? 1 : 0;
 }
 
-const CipherModuleApi kApi{
+const CipherModuleApi API{
     CIPHER_MODULE_ABI_VERSION,
     sizeof(CipherModuleApi),
     ::get_algorithm_info,
@@ -698,10 +698,10 @@ const CipherModuleApi kApi{
 
 std::size_t output_size(std::size_t input_size, int operation_type) {
     if (operation_type == CIPHER_OPERATION_ENCRYPT) {
-        const std::size_t block_count = input_size / kPlaintextBlockBytes + 1;
+        const std::size_t block_count = input_size / PLAINTEXT_BLOCK_BYTES + 1;
         if (block_count > (std::numeric_limits<std::size_t>::max() -
-                           kContainerHeaderBytes) / kCiphertextBlockBytes) return 0;
-        return kContainerHeaderBytes + block_count * kCiphertextBlockBytes;
+                           CONTAINER_HEADER_BYTES) / CIPHERTEXT_BLOCK_BYTES) return 0;
+        return CONTAINER_HEADER_BYTES + block_count * CIPHERTEXT_BLOCK_BYTES;
     }
     if (operation_type == CIPHER_OPERATION_DECRYPT) return input_size;
     return 0;
@@ -761,9 +761,9 @@ int decrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept
 }  // Анонимное пространство имён.
 
 extern "C" CIPHER_MODULE_EXPORT const AlgorithmInfo* get_algorithm_info(void) {
-    static const AlgorithmInfo information{
-        CIPHER_MODULE_ABI_VERSION, sizeof(AlgorithmInfo), "Шифр Эль-Гамаля", kKeyBytes};
-    return &information;
+    static const AlgorithmInfo INFORMATION{
+        CIPHER_MODULE_ABI_VERSION, sizeof(AlgorithmInfo), "Шифр Эль-Гамаля", KEY_BYTES};
+    return &INFORMATION;
 }
 
 extern "C" CIPHER_MODULE_EXPORT std::size_t get_output_size(
@@ -843,5 +843,5 @@ extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
 }
 
 extern "C" CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void) {
-    return &kApi;
+    return &API;
 }

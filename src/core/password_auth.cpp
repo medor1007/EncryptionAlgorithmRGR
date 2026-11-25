@@ -22,11 +22,11 @@
 namespace {
 
 // Параметры записи пароля.
-constexpr int kIterations = 600000;
-constexpr std::size_t kSaltSize = 16;
-constexpr std::size_t kHashSize = 32;
-constexpr char kRecordVersion[] = "RGRPASS1";
-constexpr char kDefaultPassword[] = "qwerty123";
+constexpr int ITERATIONS = 600000;
+constexpr std::size_t SALT_SIZE = 16;
+constexpr std::size_t HASH_SIZE = 32;
+constexpr char RECORD_VERSION[] = "RGRPASS1";
+constexpr char DEFAULT_PASSWORD[] = "qwerty123";
 
 struct MemoryWiper {
     void* data;
@@ -45,12 +45,12 @@ struct StringWiper {
 
 // Преобразование двоичных данных для файла настроек.
 std::string to_hex(const unsigned char* bytes, std::size_t size) {
-    static constexpr char digits[] = "0123456789abcdef";
+    static constexpr char HEX_DIGITS[] = "0123456789abcdef";
     std::string result;
     result.reserve(size * 2);
     for (std::size_t i = 0; i < size; ++i) {
-        result.push_back(digits[bytes[i] >> 4]);
-        result.push_back(digits[bytes[i] & 0x0f]);
+        result.push_back(HEX_DIGITS[bytes[i] >> 4]);
+        result.push_back(HEX_DIGITS[bytes[i] & 0x0f]);
     }
     return result;
 }
@@ -79,8 +79,8 @@ bool derive_hash(const std::string& password,
                  int iterations,
                  unsigned char* hash) {
     return PKCS5_PBKDF2_HMAC(password.data(), static_cast<int>(password.size()),
-                             salt, static_cast<int>(kSaltSize), iterations,
-                             EVP_sha256(), static_cast<int>(kHashSize), hash) == 1;
+                             salt, static_cast<int>(SALT_SIZE), iterations,
+                             EVP_sha256(), static_cast<int>(HASH_SIZE), hash) == 1;
 }
 
 // Ввод пароля без отображения символов.
@@ -184,17 +184,17 @@ bool create_password_record(const std::filesystem::path& path,
         return false;
     }
 
-    std::array<unsigned char, kSaltSize> salt{};
-    std::array<unsigned char, kHashSize> hash{};
+    std::array<unsigned char, SALT_SIZE> salt{};
+    std::array<unsigned char, HASH_SIZE> hash{};
     MemoryWiper salt_wiper{salt.data(), salt.size()};
     MemoryWiper hash_wiper{hash.data(), hash.size()};
     if (RAND_bytes(salt.data(), static_cast<int>(salt.size())) != 1 ||
-        !derive_hash(password, salt.data(), kIterations, hash.data())) {
+        !derive_hash(password, salt.data(), ITERATIONS, hash.data())) {
         error = "Не удалось подготовить криптографическую запись пароля.";
         return false;
     }
-    std::string record = std::string(kRecordVersion) + "$" +
-        std::to_string(kIterations) + "$" + to_hex(salt.data(), salt.size()) + "$" +
+    std::string record = std::string(RECORD_VERSION) + "$" +
+        std::to_string(ITERATIONS) + "$" + to_hex(salt.data(), salt.size()) + "$" +
         to_hex(hash.data(), hash.size());
     StringWiper record_wiper{record};
     return save_record(path, record, error);
@@ -215,7 +215,7 @@ bool verify_password_record(const std::filesystem::path& path,
     std::string version, iterations_text, salt_text, hash_text, extra;
     if (!std::getline(fields, version, '$') || !std::getline(fields, iterations_text, '$') ||
         !std::getline(fields, salt_text, '$') || !std::getline(fields, hash_text, '$') ||
-        std::getline(fields, extra, '$') || version != kRecordVersion) {
+        std::getline(fields, extra, '$') || version != RECORD_VERSION) {
         error = "Файл пароля повреждён или имеет неизвестный формат.";
         return false;
     }
@@ -232,9 +232,9 @@ bool verify_password_record(const std::filesystem::path& path,
         return false;
     }
 
-    std::array<unsigned char, kSaltSize> salt{};
-    std::array<unsigned char, kHashSize> expected_hash{};
-    std::array<unsigned char, kHashSize> actual_hash{};
+    std::array<unsigned char, SALT_SIZE> salt{};
+    std::array<unsigned char, HASH_SIZE> expected_hash{};
+    std::array<unsigned char, HASH_SIZE> actual_hash{};
     MemoryWiper salt_wiper{salt.data(), salt.size()};
     MemoryWiper expected_hash_wiper{expected_hash.data(), expected_hash.size()};
     MemoryWiper actual_hash_wiper{actual_hash.data(), actual_hash.size()};
@@ -263,7 +263,7 @@ bool authenticate_user() {
 
     std::string error;
     if (!exists) {
-        if (!create_password_record(password_path, kDefaultPassword, error)) {
+        if (!create_password_record(password_path, DEFAULT_PASSWORD, error)) {
             std::cerr << error << '\n';
             return false;
         }

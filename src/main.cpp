@@ -259,12 +259,12 @@ bool prepare_output_file(const std::string& output_path) {
 
 // Преобразование данных для текстового представления.
 std::string bytes_to_hex(const std::uint8_t* data, std::size_t size) {
-    static constexpr char digits[] = "0123456789ABCDEF";
+    static constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
     std::string result;
     result.reserve(size * 2);
     for (std::size_t i = 0; i < size; ++i) {
-        result.push_back(digits[data[i] >> 4]);
-        result.push_back(digits[data[i] & 0x0f]);
+        result.push_back(HEX_DIGITS[data[i] >> 4]);
+        result.push_back(HEX_DIGITS[data[i] & 0x0f]);
     }
     return result;
 }
@@ -606,7 +606,7 @@ struct OwnedModuleBuffer {
     }
 };
 
-constexpr std::array<std::uint8_t, 8> kKeyPairMagic{
+constexpr std::array<std::uint8_t, 8> KEY_PAIR_MAGIC{
     'C', 'R', 'Y', 'P', 'K', 'E', 'Y', '1'};
 
 void append_u64(std::vector<std::uint8_t>& output, std::uint64_t value) {
@@ -650,7 +650,7 @@ bool generate_key_pair(const CipherModule& module,
 std::vector<std::uint8_t> make_key_pair_record(
     const std::vector<std::uint8_t>& encryption_key,
     const std::vector<std::uint8_t>& decryption_key) {
-    std::vector<std::uint8_t> record(kKeyPairMagic.begin(), kKeyPairMagic.end());
+    std::vector<std::uint8_t> record(KEY_PAIR_MAGIC.begin(), KEY_PAIR_MAGIC.end());
     append_u64(record, encryption_key.size());
     append_u64(record, decryption_key.size());
     record.insert(record.end(), encryption_key.begin(), encryption_key.end());
@@ -661,24 +661,24 @@ std::vector<std::uint8_t> make_key_pair_record(
 bool select_key(const std::vector<std::uint8_t>& record,
                 OperationMode mode,
                 std::vector<std::uint8_t>& key) {
-    if (record.size() < kKeyPairMagic.size() + 2 * sizeof(std::uint64_t) ||
-        !std::equal(kKeyPairMagic.begin(), kKeyPairMagic.end(), record.begin())) {
+    if (record.size() < KEY_PAIR_MAGIC.size() + 2 * sizeof(std::uint64_t) ||
+        !std::equal(KEY_PAIR_MAGIC.begin(), KEY_PAIR_MAGIC.end(), record.begin())) {
         key = record;
         return !key.empty();
     }
     std::uint64_t encryption_size = 0;
     std::uint64_t decryption_size = 0;
-    constexpr std::size_t lengths_offset = kKeyPairMagic.size();
-    constexpr std::size_t data_offset = lengths_offset + 2 * sizeof(std::uint64_t);
-    if (!read_u64(record, lengths_offset, encryption_size) ||
-        !read_u64(record, lengths_offset + sizeof(std::uint64_t), decryption_size) ||
-        encryption_size > record.size() - data_offset ||
-        decryption_size != record.size() - data_offset - encryption_size) {
+    constexpr std::size_t LENGTHS_OFFSET = KEY_PAIR_MAGIC.size();
+    constexpr std::size_t DATA_OFFSET = LENGTHS_OFFSET + 2 * sizeof(std::uint64_t);
+    if (!read_u64(record, LENGTHS_OFFSET, encryption_size) ||
+        !read_u64(record, LENGTHS_OFFSET + sizeof(std::uint64_t), decryption_size) ||
+        encryption_size > record.size() - DATA_OFFSET ||
+        decryption_size != record.size() - DATA_OFFSET - encryption_size) {
         return false;
     }
     const std::size_t selected_offset = mode == OperationMode::Encrypt
-        ? data_offset
-        : data_offset + static_cast<std::size_t>(encryption_size);
+        ? DATA_OFFSET
+        : DATA_OFFSET + static_cast<std::size_t>(encryption_size);
     const std::size_t selected_size = static_cast<std::size_t>(
         mode == OperationMode::Encrypt ? encryption_size : decryption_size);
     if (selected_size == 0) return false;

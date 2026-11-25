@@ -162,21 +162,21 @@ bool check_round_trip(const CipherModuleApi* api,
         return false;
     }
 
-    constexpr std::size_t legacy_header_size = 12;
-    constexpr std::size_t current_header_size = 44;
-    const bool is_hill = encrypted.size >= current_header_size &&
+    constexpr std::size_t LEGACY_HEADER_SIZE = 12;
+    constexpr std::size_t CURRENT_HEADER_SIZE = 44;
+    const bool is_hill = encrypted.size >= CURRENT_HEADER_SIZE &&
                          std::memcmp(encrypted.data, "HIL2", 4) == 0;
-    const bool is_elgamal = encrypted.size >= current_header_size &&
+    const bool is_elgamal = encrypted.size >= CURRENT_HEADER_SIZE &&
                             std::memcmp(encrypted.data, "ELG2", 4) == 0;
     if (is_hill || is_elgamal) {
         std::vector<std::uint8_t> legacy_ciphertext;
-        legacy_ciphertext.reserve(legacy_header_size + encrypted.size - current_header_size);
+        legacy_ciphertext.reserve(LEGACY_HEADER_SIZE + encrypted.size - CURRENT_HEADER_SIZE);
         const char* legacy_magic = is_hill ? "HIL1" : "ELG1";
         legacy_ciphertext.insert(legacy_ciphertext.end(), legacy_magic, legacy_magic + 4);
         legacy_ciphertext.insert(legacy_ciphertext.end(), encrypted.data + 4,
-                                 encrypted.data + legacy_header_size);
+                                 encrypted.data + LEGACY_HEADER_SIZE);
         legacy_ciphertext.insert(legacy_ciphertext.end(),
-                                 encrypted.data + current_header_size,
+                                 encrypted.data + CURRENT_HEADER_SIZE,
                                  encrypted.data + encrypted.size);
 
         ModuleBuffer legacy_decrypted{api};
