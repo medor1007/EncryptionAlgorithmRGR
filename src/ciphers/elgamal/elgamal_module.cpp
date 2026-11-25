@@ -568,7 +568,8 @@ int encrypt_stream_impl(ConstBuffer key,
                         const std::uint8_t* input_digest,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,
-                        void* context) {
+                        void* context,
+                        std::uint32_t deterministic_exponent = 0) {
     if (input_digest == nullptr || read_callback == nullptr || write_callback == nullptr ||
         input_size > std::numeric_limits<std::uint64_t>::max() - CONTAINER_HEADER_BYTES) return 0;
     BnPtr p(nullptr), generator(nullptr), public_value(nullptr);
@@ -603,9 +604,13 @@ int encrypt_stream_impl(ConstBuffer key,
         const std::uint8_t padding = static_cast<std::uint8_t>(FIELD_BYTES - 1 - block_size);
         std::fill(encoded.begin() + static_cast<std::ptrdiff_t>(1 + block_size),
                   encoded.end(), padding);
+        const bool exponent_ready = deterministic_exponent == 0
+            ? BN_rand_range(ephemeral.get(), range.get()) == 1 &&
+              BN_add_word(ephemeral.get(), 1) == 1
+            : BN_set_word(ephemeral.get(), deterministic_exponent) == 1 &&
+              BN_cmp(ephemeral.get(), range.get()) <= 0;
         if (BN_bin2bn(encoded.data(), static_cast<int>(encoded.size()), message.get()) == nullptr ||
-            BN_rand_range(ephemeral.get(), range.get()) != 1 ||
-            BN_add_word(ephemeral.get(), 1) != 1 ||
+            !exponent_ready ||
             BN_mod_exp(first.get(), generator.get(), ephemeral.get(), p.get(), context_bn.get()) != 1 ||
             BN_mod_exp(shared.get(), public_value.get(), ephemeral.get(), p.get(), context_bn.get()) != 1 ||
             BN_mod_mul(second.get(), message.get(), shared.get(), p.get(), context_bn.get()) != 1) {
@@ -716,7 +721,9 @@ const CipherModuleApi API{
 #ifdef CIPHER_MODULE_TESTING
     ::generate_keys_for_test,
     ::encrypt_for_test,
+    ::encrypt_stream_for_test,
 #else
+    nullptr,
     nullptr,
     nullptr,
 #endif
@@ -865,6 +872,22 @@ extern "C" CIPHER_MODULE_EXPORT int encrypt_stream(
         return CIPHER_MODULE_STATUS_ERROR;
     }
 }
+
+#ifdef CIPHER_MODULE_TESTING
+extern "C" CIPHER_MODULE_EXPORT int encrypt_stream_for_test(
+    ConstBuffer key, std::uint64_t input_size, const std::uint8_t* input_digest,
+    std::uint32_t deterministic_exponent, CipherReadCallback read_callback,
+    CipherWriteCallback write_callback, void* context) {
+    if (deterministic_exponent == 0) return CIPHER_MODULE_STATUS_ERROR;
+    try {
+        return encrypt_stream_impl(key, input_size, input_digest, read_callback,
+                                   write_callback, context, deterministic_exponent) != 0
+            ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
+    } catch (...) {
+        return CIPHER_MODULE_STATUS_ERROR;
+    }
+}
+#endif
 
 extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
     ConstBuffer key, CipherReadCallback read_callback,

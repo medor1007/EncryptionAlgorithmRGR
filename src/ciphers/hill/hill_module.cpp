@@ -110,7 +110,7 @@ private:
     std::size_t buffered_ = 0;
 };
 
-// Арифметика по модулю 256 для матрицы ключа и её обратной матрицы.
+// Обратимость по модулю 256 требует взаимной простоты определителя и 256.
 int inverse_mod_256(int value, int& inverse) {
     value %= 256;
     if (value < 0) {
@@ -526,6 +526,7 @@ const CipherModuleApi API{
     free_buffer,
     encrypt_stream,
     decrypt_stream,
+    nullptr,
     nullptr,
     nullptr,
 };

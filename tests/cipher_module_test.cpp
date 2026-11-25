@@ -67,10 +67,20 @@ bool check_stream_round_trip(const CipherModuleApi* api,
 
     MemoryStream stream{&plaintext, 0, {}};
     const ConstBuffer encryption_key_buffer{encryption_key.data(), encryption_key.size()};
-    if (api->encrypt_stream(encryption_key_buffer, plaintext.size(), digest.data(),
-                            read_memory_stream, write_memory_stream, &stream) !=
-        CIPHER_MODULE_STATUS_OK) {
+    const auto encrypt_stream = [&](MemoryStream& destination) {
+        return api->encrypt_stream_for_test != nullptr
+            ? api->encrypt_stream_for_test(encryption_key_buffer, plaintext.size(), digest.data(),
+                                            17, read_memory_stream, write_memory_stream, &destination)
+            : api->encrypt_stream(encryption_key_buffer, plaintext.size(), digest.data(),
+                                   read_memory_stream, write_memory_stream, &destination);
+    };
+    if (encrypt_stream(stream) != CIPHER_MODULE_STATUS_OK) {
         std::cerr << "Ошибка потокового шифрования, длина " << input_size << '\n';
+        return false;
+    }
+    MemoryStream repeated{&plaintext, 0, {}};
+    if (encrypt_stream(repeated) != CIPHER_MODULE_STATUS_OK || repeated.output != stream.output) {
+        std::cerr << "Потоковый тест не воспроизводится.\n";
         return false;
     }
     const std::vector<std::uint8_t> ciphertext = stream.output;

@@ -40,6 +40,12 @@ bool CipherModule::load(const std::string& path, std::string& error) {
         api_storage_.encrypt_for_test =
             reinterpret_cast<decltype(api_storage_.encrypt_for_test)>(test_encrypt_function);
     }
+    optional_error.clear();
+    void* test_stream_function = library_.get_symbol("encrypt_stream_for_test", optional_error);
+    if (test_stream_function != nullptr) {
+        api_storage_.encrypt_stream_for_test =
+            reinterpret_cast<decltype(api_storage_.encrypt_stream_for_test)>(test_stream_function);
+    }
     api_ = &api_storage_;
 
     const AlgorithmInfo* information = api_->get_algorithm_info();

@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define CIPHER_MODULE_ABI_VERSION 4u
+#define CIPHER_MODULE_ABI_VERSION 5u
 
 typedef struct ConstBuffer {
     const uint8_t* data;
@@ -89,6 +89,13 @@ typedef struct CipherModuleApi {
                             ConstBuffer input,
                             uint32_t deterministic_exponent,
                             MutBuffer* output);
+    int (*encrypt_stream_for_test)(ConstBuffer key,
+                                   uint64_t input_size,
+                                   const uint8_t* input_digest,
+                                   uint32_t deterministic_exponent,
+                                   CipherReadCallback read_callback,
+                                   CipherWriteCallback write_callback,
+                                   void* context);
 } CipherModuleApi;
 
 typedef const CipherModuleApi* (*GetCipherModuleApi)(void);
@@ -129,6 +136,13 @@ CIPHER_MODULE_EXPORT int encrypt_for_test(ConstBuffer key,
                                           ConstBuffer input,
                                           uint32_t deterministic_exponent,
                                           MutBuffer* output);
+CIPHER_MODULE_EXPORT int encrypt_stream_for_test(ConstBuffer key,
+                                                 uint64_t input_size,
+                                                 const uint8_t* input_digest,
+                                                 uint32_t deterministic_exponent,
+                                                 CipherReadCallback read_callback,
+                                                 CipherWriteCallback write_callback,
+                                                 void* context);
 #endif
 CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void);
 
