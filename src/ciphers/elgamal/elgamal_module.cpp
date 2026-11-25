@@ -137,12 +137,13 @@ bool parse_key(const std::uint8_t* key,
         BN_cmp(third.get(), p_minus_one.get()) >= 0) {
         return false;
     }
+    BnPtr subgroup_order(BN_dup(p_minus_one.get()));
+    if (!subgroup_order || BN_rshift1(subgroup_order.get(), subgroup_order.get()) != 1) return false;
+    if (magic == PRIVATE_KEY_MAGIC && BN_cmp(third.get(), subgroup_order.get()) == 0) return false;
     if (magic == PUBLIC_KEY_MAGIC) {
-        BnPtr subgroup_order(BN_dup(p_minus_one.get()));
         BnPtr check = make_bn();
         BnContextPtr context = make_context();
-        if (!subgroup_order || !check || !context ||
-            BN_rshift1(subgroup_order.get(), subgroup_order.get()) != 1 ||
+        if (!check || !context ||
             BN_mod_exp(check.get(), third.get(), subgroup_order.get(), p.get(), context.get()) != 1 ||
             !BN_is_one(check.get())) return false;
     }
@@ -199,7 +200,8 @@ int generate_keys_impl(const std::uint8_t* parameters,
     if (BN_get_rfc3526_prime_2048(p.get()) == nullptr ||
         BN_set_word(generator.get(), 2) != 1 ||
         BN_copy(range.get(), p.get()) == nullptr ||
-        BN_sub_word(range.get(), 3) != 1) {
+        BN_sub_word(range.get(), 1) != 1 ||
+        BN_rshift1(range.get(), range.get()) != 1 || BN_sub_word(range.get(), 1) != 1) {
         return 0;
     }
 
@@ -274,7 +276,8 @@ int encrypt_impl(const std::uint8_t* key,
     if (!message || !ephemeral || !first || !shared || !second ||
         !lower_bound || !range || !context ||
         BN_set_word(lower_bound.get(), 1) != 1 ||
-        BN_copy(range.get(), p.get()) == nullptr || BN_sub_word(range.get(), 2) != 1) {
+        BN_copy(range.get(), p.get()) == nullptr || BN_sub_word(range.get(), 1) != 1 ||
+        BN_rshift1(range.get(), range.get()) != 1 || BN_sub_word(range.get(), 1) != 1) {
         return 0;
     }
 
@@ -578,7 +581,8 @@ int encrypt_stream_impl(ConstBuffer key,
     BnPtr shared = make_bn(), second = make_bn(), range = make_bn();
     BnContextPtr context_bn = make_context();
     if (!message || !ephemeral || !first || !shared || !second || !range || !context_bn ||
-        BN_copy(range.get(), p.get()) == nullptr || BN_sub_word(range.get(), 2) != 1) return 0;
+        BN_copy(range.get(), p.get()) == nullptr || BN_sub_word(range.get(), 1) != 1 ||
+        BN_rshift1(range.get(), range.get()) != 1 || BN_sub_word(range.get(), 1) != 1) return 0;
 
     StreamReader reader(read_callback, context);
     StreamWriter writer(write_callback, context);

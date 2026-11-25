@@ -1,6 +1,7 @@
 #include "core/cipher_module.hpp"
 
 #include <openssl/evp.h>
+#include <openssl/bn.h>
 
 #include <algorithm>
 #include <array>
@@ -381,6 +382,19 @@ bool check_module(const std::string& library_path) {
     }
 
     if (!is_hill) {
+        auto degenerate_private_key = private_key;
+        BIGNUM* order = BN_bin2bn(public_key.data() + 4, 256, nullptr);
+        if (order == nullptr) return false;
+        const bool encoded_order = BN_rshift1(order, order) == 1 &&
+            BN_bn2binpad(order, degenerate_private_key.data() + 516, 256) == 256;
+        BN_clear_free(order);
+        if (!encoded_order) return false;
+        ModuleBuffer degenerate_result{api};
+        if (transform(api, false, degenerate_private_key, valid_ciphertext.data,
+                       valid_ciphertext.size, degenerate_result)) {
+            std::cerr << "Принят вырожденный закрытый показатель Эль-Гамаля.\n";
+            return false;
+        }
         for (int field = 0; field < 3; ++field) {
             auto invalid_group_key = public_key;
             if (field == 0) {
