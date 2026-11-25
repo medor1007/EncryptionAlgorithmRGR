@@ -37,6 +37,7 @@ bool assign_value(int& index,
 
 }
 
+// Запрещаем совпадение исходных данных, результата, ключей и временных файлов.
 bool validate_file_paths(const CommandLineOptions& options, std::string& error) {
     const auto same_file = [](const std::string& first, const std::string& second) {
         std::error_code filesystem_error;
@@ -83,6 +84,7 @@ bool validate_file_paths(const CommandLineOptions& options, std::string& error) 
     return true;
 }
 
+// Разбор коротких и длинных аргументов и проверка их сочетаний.
 ParseResult parse_command_line(int argc,
                                char* argv[],
                                CommandLineOptions& options,

@@ -153,6 +153,7 @@ std::uint64_t decode_length(const std::uint8_t* source) {
     return length;
 }
 
+// Создание открытого и закрытого ключей Эль-Гамаля.
 int generate_keys_impl(const std::uint8_t* parameters,
                        std::size_t parameters_size,
                        std::uint8_t** encryption_key,
@@ -230,6 +231,7 @@ int generate_keys_impl(const std::uint8_t* parameters,
     return 1;
 }
 
+// Преобразование блоков в пары чисел (a, b) по модулю p.
 int encrypt_impl(const std::uint8_t* key,
                  std::size_t key_size,
                  const std::uint8_t* input,
@@ -323,6 +325,7 @@ int encrypt_impl(const std::uint8_t* key,
     return 1;
 }
 
+// Восстановление блоков с помощью закрытого показателя.
 int decrypt_impl(const std::uint8_t* key,
                  std::size_t key_size,
                  const std::uint8_t* input,
@@ -549,6 +552,7 @@ private:
     std::size_t buffered_ = 0;
 };
 
+// Потоковая обработка: в памяти находится только текущий блок.
 int encrypt_stream_impl(ConstBuffer key,
                         std::uint64_t input_size,
                         const std::uint8_t* input_digest,
@@ -611,6 +615,7 @@ int encrypt_stream_impl(ConstBuffer key,
     return reader.at_end() && writer.finish() ? 1 : 0;
 }
 
+// Чтение пар чисел, восстановление данных и проверка целостности.
 int decrypt_stream_impl(ConstBuffer key,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,

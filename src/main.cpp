@@ -47,6 +47,7 @@ struct FileCloser {
 
 using FilePtr = std::unique_ptr<std::FILE, FileCloser>;
 
+// Контекст чтения и записи файлов для функций динамического модуля.
 struct FileStreamContext {
     std::FILE* input;
     std::FILE* output;
@@ -67,6 +68,7 @@ int write_stream_callback(void* context, const std::uint8_t* buffer,
     return size == 0 || std::fwrite(buffer, 1, size, stream->output) == size;
 }
 
+// Чтение и сохранение небольших файлов с ключами.
 bool read_file(const std::string& path, std::vector<std::uint8_t>& data) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -133,6 +135,7 @@ bool prepare_output_directory(const std::string& output_path) {
     return true;
 }
 
+// Поиск библиотеки выбранного шифра рядом с исполняемым файлом.
 std::filesystem::path module_path(Cipher cipher, const char* executable_path) {
     std::filesystem::path executable(executable_path);
     std::filesystem::path directory = executable.has_parent_path()
@@ -158,6 +161,7 @@ struct OwnedModuleBuffer {
     }
 };
 
+// Формат файла пары ключей: сигнатура, длины и содержимое двух ключей.
 constexpr std::array<std::uint8_t, 8> KEY_PAIR_MAGIC{
     'C', 'R', 'Y', 'P', 'K', 'E', 'Y', '1'};
 
@@ -276,6 +280,7 @@ bool spool_input(FILE* source, FILE* spool, std::uint64_t& size,
            std::fseek(spool, 0, SEEK_SET) == 0;
 }
 
+// Потоковый ввод-вывод без загрузки всего файла в память.
 bool copy_file_stream(FILE* source, FILE* destination) {
     if (std::fseek(source, 0, SEEK_SET) != 0) return false;
     std::array<std::uint8_t, 65536> buffer{};
@@ -341,6 +346,7 @@ bool write_cli_bytes(const std::string& path,
     return write_file(path, data, size);
 }
 
+// Выполнение операции: проверка путей, загрузка модуля, ключи и обработка данных.
 int execute_cli(const CommandLineOptions& options, const char* executable_path) {
     std::string path_error;
     if (!validate_file_paths(options, path_error)) {
@@ -458,6 +464,7 @@ std::string read_menu_path(const std::string& prompt, const std::string& default
     return path;
 }
 
+// Выбор шифра и файлов через интерактивное меню.
 int run_interactive_menu(const char* executable_path) {
     while (true) {
         std::cout << "\nПрограмма шифрования и расшифрования\n"
@@ -550,6 +557,7 @@ int run_interactive_menu(const char* executable_path) {
 
 }
 
+// Точка входа: аргументы, парольная проверка и запуск выбранного режима.
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
     SetConsoleCP(CP_UTF8);

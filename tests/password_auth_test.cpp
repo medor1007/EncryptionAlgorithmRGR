@@ -14,19 +14,19 @@ int main() {
     std::filesystem::remove_all(directory, filesystem_error);
 
     std::string error;
-    if (!create_password_record(password_file, "secure-test-password", error)) {
+    if (!create_password_record(password_file, "640504", error)) {
         std::cerr << "Не удалось создать запись пароля: " << error << '\n';
         return 1;
     }
     std::ifstream stored_file(password_file, std::ios::binary);
     const std::string stored_record((std::istreambuf_iterator<char>(stored_file)),
                                     std::istreambuf_iterator<char>());
-    if (stored_record.find("secure-test-password") != std::string::npos) {
+    if (stored_record.find("640504") != std::string::npos) {
         std::cerr << "Пароль сохранён в открытом виде.\n";
         std::filesystem::remove_all(directory, filesystem_error);
         return 1;
     }
-    if (!verify_password_record(password_file, "secure-test-password", error)) {
+    if (!verify_password_record(password_file, "640504", error)) {
         std::cerr << "Правильный пароль не принят: " << error << '\n';
         std::filesystem::remove_all(directory, filesystem_error);
         return 1;

@@ -110,6 +110,7 @@ private:
     std::size_t buffered_ = 0;
 };
 
+// Арифметика по модулю 256 для матрицы ключа и её обратной матрицы.
 int inverse_mod_256(int value, int& inverse) {
     value %= 256;
     if (value < 0) {
@@ -164,6 +165,7 @@ int allocate_copy(const std::uint8_t* data, std::size_t size, std::uint8_t** out
     return 1;
 }
 
+// Создание обратимой матрицы и соответствующего ключа расшифрования.
 int generate_keys_alloc(const std::uint8_t* parameters,
                   std::size_t parameters_size,
                   std::uint8_t** encryption_key,
@@ -388,6 +390,7 @@ void transform_pair(const std::uint8_t* key,
     output[1] = mod_256(first * key[1] + second * key[3]);
 }
 
+// Потоковое шифрование: заголовок, пары байтов и дополнение PKCS7.
 int encrypt_stream_impl(ConstBuffer key,
                         std::uint64_t input_size,
                         const std::uint8_t* input_digest,
@@ -443,6 +446,7 @@ int encrypt_stream_impl(ConstBuffer key,
     return reader.at_end() && writer.finish() ? 1 : 0;
 }
 
+// Обратное преобразование блоков с проверкой дополнения и контрольной суммы.
 int decrypt_stream_impl(ConstBuffer key,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,

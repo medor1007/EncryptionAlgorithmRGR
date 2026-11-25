@@ -22,11 +22,12 @@
 
 namespace {
 
+// Параметры формирования записи пароля и стандартный пароль приложения.
 constexpr int ITERATIONS = 600000;
 constexpr std::size_t SALT_SIZE = 16;
 constexpr std::size_t HASH_SIZE = 32;
 constexpr char RECORD_VERSION[] = "RGRPASS1";
-constexpr char DEFAULT_PASSWORD[] = "qwerty123";
+constexpr char DEFAULT_PASSWORD[] = "640504";
 
 #ifndef _WIN32
 bool write_terminal(int descriptor, const char* data, std::size_t size) {
@@ -86,6 +87,7 @@ bool from_hex(const std::string& text, unsigned char* output, std::size_t size) 
     return true;
 }
 
+// PBKDF2 получает проверочное значение из пароля и случайной соли.
 bool derive_hash(const std::string& password,
                  const unsigned char* salt,
                  int iterations,
@@ -95,6 +97,7 @@ bool derive_hash(const std::string& password,
                              EVP_sha256(), static_cast<int>(HASH_SIZE), hash) == 1;
 }
 
+// На время ввода отключается отображение символов в терминале.
 std::string read_password(const std::string& prompt, std::string& error) {
 #ifdef _WIN32
     HANDLE console = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
@@ -193,11 +196,12 @@ bool save_record(const std::filesystem::path& path,
 
 }
 
+// В файл записываются соль и хеш; сам пароль в открытом виде не сохраняется.
 bool create_password_record(const std::filesystem::path& path,
                             const std::string& password,
                             std::string& error) {
-    if (password.size() < 8 || password.size() > 1024) {
-        error = "Пароль должен содержать от 8 до 1024 символов.";
+    if (password.size() < 6 || password.size() > 1024) {
+        error = "Пароль должен содержать от 6 до 1024 символов.";
         return false;
     }
 
@@ -217,6 +221,7 @@ bool create_password_record(const std::filesystem::path& path,
     return save_record(path, record, error);
 }
 
+// Проверка структуры записи и сравнение хеша введённого пароля.
 bool verify_password_record(const std::filesystem::path& path,
                             const std::string& password,
                             std::string& error) {
@@ -268,6 +273,7 @@ bool verify_password_record(const std::filesystem::path& path,
     return true;
 }
 
+// При первом запуске создаётся запись, затем запрашивается пароль для входа.
 bool authenticate_user() {
     const std::filesystem::path password_path("config/access.dat");
     std::error_code filesystem_error;
