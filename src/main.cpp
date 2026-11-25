@@ -6,12 +6,11 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <array>
 #include <cstdio>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <string>

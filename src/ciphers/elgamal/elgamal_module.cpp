@@ -219,7 +219,7 @@ int generate_keys_impl(const std::uint8_t* parameters,
     }
     if (!exponent_ready ||
         BN_mod_exp(public_value.get(), generator.get(), private_exponent.get(),
-                   p.get(), context.get()) != 1) {
+                   p.get(), context.get()) != 1 || BN_is_one(public_value.get())) {
         return 0;
     }
 

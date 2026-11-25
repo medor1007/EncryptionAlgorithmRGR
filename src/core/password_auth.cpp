@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #ifdef _WIN32
