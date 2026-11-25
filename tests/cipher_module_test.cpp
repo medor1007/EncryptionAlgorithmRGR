@@ -68,7 +68,8 @@ bool check_stream_round_trip(const CipherModuleApi* api,
     MemoryStream stream{&plaintext, 0, {}};
     const ConstBuffer encryption_key_buffer{encryption_key.data(), encryption_key.size()};
     if (api->encrypt_stream(encryption_key_buffer, plaintext.size(), digest.data(),
-                            read_memory_stream, write_memory_stream, &stream) == 0) {
+                            read_memory_stream, write_memory_stream, &stream) !=
+        CIPHER_MODULE_STATUS_OK) {
         std::cerr << "Ошибка потокового шифрования, длина " << input_size << '\n';
         return false;
     }
@@ -78,7 +79,7 @@ bool check_stream_round_trip(const CipherModuleApi* api,
     stream.output.clear();
     const ConstBuffer decryption_key_buffer{decryption_key.data(), decryption_key.size()};
     if (api->decrypt_stream(decryption_key_buffer, read_memory_stream,
-                            write_memory_stream, &stream) == 0 ||
+                            write_memory_stream, &stream) != CIPHER_MODULE_STATUS_OK ||
         stream.output != plaintext) {
         std::cerr << "Ошибка потокового расшифрования, длина " << input_size << '\n';
         return false;
@@ -108,7 +109,7 @@ bool transform(const CipherModuleApi* api,
                ? api->encrypt_for_test(key_buffer, input_buffer, 17, &output_buffer)
                : api->encrypt(key_buffer, input_buffer, &output_buffer))
         : api->decrypt(key_buffer, input_buffer, &output_buffer);
-    if (succeeded == 0) {
+    if (succeeded != CIPHER_MODULE_STATUS_OK) {
         api->free_buffer(output.data, output.size);
         output.data = nullptr;
         output.size = 0;
@@ -235,7 +236,7 @@ bool check_module(const std::string& library_path) {
         : api->generate_keys(nullptr, 0,
                              &encryption_key.data, &encryption_key_size,
                              &decryption_key.data, &decryption_key_size);
-    if (generated == 0) {
+    if (generated != CIPHER_MODULE_STATUS_OK) {
         std::cerr << "Не удалось создать ключи для «" << module.name() << "».\n";
         return false;
     }
@@ -263,7 +264,7 @@ bool check_module(const std::string& library_path) {
         : api->generate_keys(nullptr, 0,
                              &other_public_key.data, &other_public_key_size,
                              &other_private_key.data, &other_private_key_size);
-    if (generated_other == 0) {
+    if (generated_other != CIPHER_MODULE_STATUS_OK) {
         std::cerr << "Не удалось создать дополнительную пару ключей для проверки.\n";
         return false;
     }

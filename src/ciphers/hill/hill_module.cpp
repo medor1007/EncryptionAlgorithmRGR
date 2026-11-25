@@ -594,17 +594,20 @@ extern "C" CIPHER_MODULE_EXPORT int generate_keys(
     std::uint8_t** decryption_key, std::size_t* decryption_key_size) {
     return generate_keys_alloc(parameters, parameters_size, encryption_key,
                                encryption_key_size, decryption_key,
-                               decryption_key_size);
+                               decryption_key_size) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 
 extern "C" CIPHER_MODULE_EXPORT int encrypt(
     ConstBuffer key, ConstBuffer input, MutBuffer* output) {
-    return encrypt_into(key, input, output);
+    return encrypt_into(key, input, output) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 
 extern "C" CIPHER_MODULE_EXPORT int decrypt(
     ConstBuffer key, ConstBuffer input, MutBuffer* output) {
-    return decrypt_into(key, input, output);
+    return decrypt_into(key, input, output) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 
 extern "C" CIPHER_MODULE_EXPORT void free_buffer(
@@ -618,9 +621,10 @@ extern "C" CIPHER_MODULE_EXPORT int encrypt_stream(
     void* context) {
     try {
         return encrypt_stream_impl(key, input_size, input_digest, read_callback,
-                                   write_callback, context);
+                                   write_callback, context) != 0
+            ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
     } catch (...) {
-        return 0;
+        return CIPHER_MODULE_STATUS_ERROR;
     }
 }
 
@@ -628,9 +632,10 @@ extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
     ConstBuffer key, CipherReadCallback read_callback,
     CipherWriteCallback write_callback, void* context) {
     try {
-        return decrypt_stream_impl(key, read_callback, write_callback, context);
+        return decrypt_stream_impl(key, read_callback, write_callback, context) != 0
+            ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
     } catch (...) {
-        return 0;
+        return CIPHER_MODULE_STATUS_ERROR;
     }
 }
 

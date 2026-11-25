@@ -187,7 +187,7 @@ bool generate_key_pair(const CipherModule& module,
     std::size_t encryption_size = 0;
     std::size_t decryption_size = 0;
     if (api->generate_keys(nullptr, 0, &encryption.data, &encryption_size,
-                           &decryption.data, &decryption_size) == 0 ||
+                           &decryption.data, &decryption_size) != CIPHER_MODULE_STATUS_OK ||
         encryption.data == nullptr || decryption.data == nullptr ||
         encryption_size == 0 || decryption_size == 0) {
         return false;
@@ -410,9 +410,9 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     const bool transformed = options.mode == OperationMode::Encrypt
         ? api->encrypt_stream(key_buffer, input_size, input_digest.data(),
                               read_stream_callback, write_stream_callback,
-                              &transform_context) != 0
+                              &transform_context) == CIPHER_MODULE_STATUS_OK
         : api->decrypt_stream(key_buffer, read_stream_callback,
-                              write_stream_callback, &transform_context) != 0;
+                              write_stream_callback, &transform_context) == CIPHER_MODULE_STATUS_OK;
     if (!transformed) {
         std::cerr << (options.mode == OperationMode::Encrypt
             ? "Не удалось зашифровать входные данные.\n"

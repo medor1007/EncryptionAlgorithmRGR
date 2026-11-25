@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define CIPHER_MODULE_ABI_VERSION 3u
+#define CIPHER_MODULE_ABI_VERSION 4u
 
 typedef struct ConstBuffer {
     const uint8_t* data;
@@ -48,6 +48,11 @@ typedef struct AlgorithmInfo {
 enum CipherOperation {
     CIPHER_OPERATION_ENCRYPT = 1,
     CIPHER_OPERATION_DECRYPT = 2,
+};
+
+enum CipherModuleStatus {
+    CIPHER_MODULE_STATUS_OK = 0,
+    CIPHER_MODULE_STATUS_ERROR = 1,
 };
 
 typedef struct CipherModuleApi {

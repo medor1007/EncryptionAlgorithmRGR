@@ -777,7 +777,8 @@ extern "C" CIPHER_MODULE_EXPORT int generate_keys(
     std::uint8_t** decryption_key, std::size_t* decryption_key_size) {
     return generate_keys_alloc(parameters, parameters_size, encryption_key,
                                encryption_key_size, decryption_key,
-                               decryption_key_size);
+                               decryption_key_size) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 
 #ifdef CIPHER_MODULE_TESTING
@@ -786,33 +787,39 @@ extern "C" CIPHER_MODULE_EXPORT int generate_keys_for_test(
     std::uint8_t** encryption_key, std::size_t* encryption_key_size,
     std::uint8_t** decryption_key, std::size_t* decryption_key_size) {
     try {
-        if (parameters == nullptr || parameters_size != sizeof(std::uint32_t)) return 0;
+        if (parameters == nullptr || parameters_size != sizeof(std::uint32_t)) {
+            return CIPHER_MODULE_STATUS_ERROR;
+        }
         return generate_keys_impl(parameters, parameters_size, encryption_key,
                                   encryption_key_size, decryption_key,
-                                  decryption_key_size);
+                                  decryption_key_size) != 0
+            ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
     } catch (...) {
-        return 0;
+        return CIPHER_MODULE_STATUS_ERROR;
     }
 }
 #endif
 
 extern "C" CIPHER_MODULE_EXPORT int encrypt(
     ConstBuffer key, ConstBuffer input, MutBuffer* output) {
-    return encrypt_into(key, input, output);
+    return encrypt_into(key, input, output) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 
 #ifdef CIPHER_MODULE_TESTING
 extern "C" CIPHER_MODULE_EXPORT int encrypt_for_test(
     ConstBuffer key, ConstBuffer input, std::uint32_t deterministic_exponent,
     MutBuffer* output) {
-    if (deterministic_exponent == 0) return 0;
-    return encrypt_into_with_exponent(key, input, deterministic_exponent, output);
+    if (deterministic_exponent == 0) return CIPHER_MODULE_STATUS_ERROR;
+    return encrypt_into_with_exponent(key, input, deterministic_exponent, output) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 #endif
 
 extern "C" CIPHER_MODULE_EXPORT int decrypt(
     ConstBuffer key, ConstBuffer input, MutBuffer* output) {
-    return decrypt_into(key, input, output);
+    return decrypt_into(key, input, output) != 0
+        ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
 }
 
 extern "C" CIPHER_MODULE_EXPORT void free_buffer(
@@ -826,9 +833,10 @@ extern "C" CIPHER_MODULE_EXPORT int encrypt_stream(
     void* context) {
     try {
         return encrypt_stream_impl(key, input_size, input_digest, read_callback,
-                                   write_callback, context);
+                                   write_callback, context) != 0
+            ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
     } catch (...) {
-        return 0;
+        return CIPHER_MODULE_STATUS_ERROR;
     }
 }
 
@@ -836,9 +844,10 @@ extern "C" CIPHER_MODULE_EXPORT int decrypt_stream(
     ConstBuffer key, CipherReadCallback read_callback,
     CipherWriteCallback write_callback, void* context) {
     try {
-        return decrypt_stream_impl(key, read_callback, write_callback, context);
+        return decrypt_stream_impl(key, read_callback, write_callback, context) != 0
+            ? CIPHER_MODULE_STATUS_OK : CIPHER_MODULE_STATUS_ERROR;
     } catch (...) {
-        return 0;
+        return CIPHER_MODULE_STATUS_ERROR;
     }
 }
 
