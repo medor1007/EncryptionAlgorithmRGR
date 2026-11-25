@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define CIPHER_MODULE_ABI_VERSION 2u
+#define CIPHER_MODULE_ABI_VERSION 3u
 
 typedef struct ConstBuffer {
     const uint8_t* data;
