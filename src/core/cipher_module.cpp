@@ -2,7 +2,6 @@
 
 #include <type_traits>
 
-// Загрузка библиотеки и проверка доступности функций общего интерфейса.
 bool CipherModule::load(const std::string& path, std::string& error) {
     unload();
     if (!library_.load(path, error)) {

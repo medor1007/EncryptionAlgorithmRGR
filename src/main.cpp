@@ -1,6 +1,7 @@
 #include "core/cipher_module.hpp"
 #include "core/command_line.hpp"
 #include "core/password_auth.hpp"
+#include "core/secure_memory.hpp"
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -33,7 +34,7 @@ enum class Cipher {
 };
 
 struct VectorCleanser {
-    std::vector<std::uint8_t>& bytes;
+    SecureBytes& bytes;
     ~VectorCleanser() {
         if (!bytes.empty()) OPENSSL_cleanse(bytes.data(), bytes.size());
     }
@@ -47,7 +48,6 @@ struct FileCloser {
 
 using FilePtr = std::unique_ptr<std::FILE, FileCloser>;
 
-// Контекст чтения и записи файлов для функций динамического модуля.
 struct FileStreamContext {
     std::FILE* input;
     std::FILE* output;
@@ -68,15 +68,23 @@ int write_stream_callback(void* context, const std::uint8_t* buffer,
     return size == 0 || std::fwrite(buffer, 1, size, stream->output) == size;
 }
 
-// Чтение и сохранение небольших файлов с ключами.
-bool read_file(const std::string& path, std::vector<std::uint8_t>& data) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return false;
+bool read_key_stream(FILE* source, SecureBytes& data) {
+    std::array<std::uint8_t, 4096> buffer{};
+    struct BufferWiper {
+        std::array<std::uint8_t, 4096>& bytes;
+        ~BufferWiper() { OPENSSL_cleanse(bytes.data(), bytes.size()); }
+    } wiper{buffer};
+    while (true) {
+        const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), source);
+        data.insert(data.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(count));
+        if (count < buffer.size()) return std::ferror(source) == 0;
     }
+}
 
-    data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-    return !file.bad();
+bool read_file(const std::string& path, SecureBytes& data) {
+    FilePtr file(std::fopen(path.c_str(), "rb"));
+    if (!file || std::setvbuf(file.get(), nullptr, _IONBF, 0) != 0) return false;
+    return read_key_stream(file.get(), data);
 }
 
 bool write_file(const std::string& path, const std::uint8_t* data, std::size_t size) {
@@ -128,14 +136,13 @@ bool prepare_output_directory(const std::string& output_path) {
     std::error_code error;
     std::filesystem::create_directories(parent, error);
     if (error) {
-        std::cout << "Не удалось создать папку для файла «" << output_path
+        std::cerr << "Не удалось создать папку для файла «" << output_path
                   << "»: " << error.message() << ".\n";
         return false;
     }
     return true;
 }
 
-// Поиск библиотеки выбранного шифра рядом с исполняемым файлом.
 std::filesystem::path module_path(Cipher cipher, const char* executable_path) {
     std::filesystem::path executable(executable_path);
     std::filesystem::path directory = executable.has_parent_path()
@@ -165,13 +172,13 @@ struct OwnedModuleBuffer {
 constexpr std::array<std::uint8_t, 8> KEY_PAIR_MAGIC{
     'C', 'R', 'Y', 'P', 'K', 'E', 'Y', '1'};
 
-void append_u64(std::vector<std::uint8_t>& output, std::uint64_t value) {
+void append_u64(SecureBytes& output, std::uint64_t value) {
     for (std::size_t index = 0; index < sizeof(value); ++index) {
         output.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
     }
 }
 
-bool read_u64(const std::vector<std::uint8_t>& input,
+bool read_u64(const SecureBytes& input,
               std::size_t offset,
               std::uint64_t& value) {
     if (offset > input.size() || input.size() - offset < sizeof(value)) return false;
@@ -183,8 +190,8 @@ bool read_u64(const std::vector<std::uint8_t>& input,
 }
 
 bool generate_key_pair(const CipherModule& module,
-                       std::vector<std::uint8_t>& encryption_key,
-                       std::vector<std::uint8_t>& decryption_key) {
+                       SecureBytes& encryption_key,
+                       SecureBytes& decryption_key) {
     const auto* api = module.api();
     OwnedModuleBuffer encryption{api};
     OwnedModuleBuffer decryption{api};
@@ -203,10 +210,10 @@ bool generate_key_pair(const CipherModule& module,
     return true;
 }
 
-std::vector<std::uint8_t> make_key_pair_record(
-    const std::vector<std::uint8_t>& encryption_key,
-    const std::vector<std::uint8_t>& decryption_key) {
-    std::vector<std::uint8_t> record(KEY_PAIR_MAGIC.begin(), KEY_PAIR_MAGIC.end());
+SecureBytes make_key_pair_record(
+    const SecureBytes& encryption_key,
+    const SecureBytes& decryption_key) {
+    SecureBytes record(KEY_PAIR_MAGIC.begin(), KEY_PAIR_MAGIC.end());
     record.reserve(KEY_PAIR_MAGIC.size() + 2 * sizeof(std::uint64_t) +
                    encryption_key.size() + decryption_key.size());
     append_u64(record, encryption_key.size());
@@ -216,9 +223,9 @@ std::vector<std::uint8_t> make_key_pair_record(
     return record;
 }
 
-bool select_key(const std::vector<std::uint8_t>& record,
+bool select_key(const SecureBytes& record,
                 OperationMode mode,
-                std::vector<std::uint8_t>& key) {
+                SecureBytes& key) {
     if (record.size() < KEY_PAIR_MAGIC.size() + 2 * sizeof(std::uint64_t) ||
         !std::equal(KEY_PAIR_MAGIC.begin(), KEY_PAIR_MAGIC.end(), record.begin())) {
         key = record;
@@ -280,7 +287,6 @@ bool spool_input(FILE* source, FILE* spool, std::uint64_t& size,
            std::fseek(spool, 0, SEEK_SET) == 0;
 }
 
-// Потоковый ввод-вывод без загрузки всего файла в память.
 bool copy_file_stream(FILE* source, FILE* destination) {
     if (std::fseek(source, 0, SEEK_SET) != 0) return false;
     std::array<std::uint8_t, 65536> buffer{};
@@ -346,7 +352,6 @@ bool write_cli_bytes(const std::string& path,
     return write_file(path, data, size);
 }
 
-// Выполнение операции: проверка путей, загрузка модуля, ключи и обработка данных.
 int execute_cli(const CommandLineOptions& options, const char* executable_path) {
     std::string path_error;
     if (!validate_file_paths(options, path_error)) {
@@ -361,8 +366,8 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
         return 1;
     }
 
-    std::vector<std::uint8_t> encryption_key;
-    std::vector<std::uint8_t> decryption_key;
+    SecureBytes encryption_key;
+    SecureBytes decryption_key;
     VectorCleanser encryption_key_cleanser{encryption_key};
     VectorCleanser decryption_key_cleanser{decryption_key};
     if (options.mode == OperationMode::GenerateKey || options.generate_key) {
@@ -386,11 +391,10 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
         }
         if (options.mode == OperationMode::GenerateKey) return 0;
     } else {
-        std::vector<std::uint8_t> key_record;
+        SecureBytes key_record;
         VectorCleanser key_record_cleanser{key_record};
         const bool key_read = options.key_path == "-"
-            ? (key_record.assign(std::istreambuf_iterator<char>(std::cin),
-                                 std::istreambuf_iterator<char>()), !std::cin.bad())
+            ? read_key_stream(stdin, key_record)
             : read_file(options.key_path, key_record);
         if (!key_read ||
             !select_key(key_record, options.mode, encryption_key)) {
@@ -407,6 +411,13 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     FilePtr output_spool(std::tmpfile());
     if (input_handle == nullptr || !input_spool || !output_spool) {
         std::cerr << "Не удалось открыть входной или временный файл.\n";
+        return 1;
+    }
+    // Стандартные буферы FILE не содержат неочищаемых копий открытого текста.
+    if (std::setvbuf(input_handle, nullptr, _IONBF, 0) != 0 ||
+        std::setvbuf(input_spool.get(), nullptr, _IONBF, 0) != 0 ||
+        std::setvbuf(output_spool.get(), nullptr, _IONBF, 0) != 0) {
+        std::cerr << "Не удалось настроить двоичные потоки.\n";
         return 1;
     }
     std::uint64_t input_size = 0;
@@ -464,7 +475,6 @@ std::string read_menu_path(const std::string& prompt, const std::string& default
     return path;
 }
 
-// Выбор шифра и файлов через интерактивное меню.
 int run_interactive_menu(const char* executable_path) {
     while (true) {
         std::cout << "\nПрограмма шифрования и расшифрования\n"
@@ -557,7 +567,6 @@ int run_interactive_menu(const char* executable_path) {
 
 }
 
-// Точка входа: аргументы, парольная проверка и запуск выбранного режима.
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
     SetConsoleCP(CP_UTF8);
@@ -579,6 +588,11 @@ int main(int argc, char* argv[]) {
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+    if (std::setvbuf(stdin, nullptr, _IONBF, 0) != 0 ||
+        std::setvbuf(stdout, nullptr, _IONBF, 0) != 0) {
+        std::cerr << "Не удалось настроить стандартные потоки.\n";
+        return 1;
+    }
     if (!authenticate_user()) {
         std::cerr << "Доступ к программе закрыт.\n";
         return 1;

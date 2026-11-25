@@ -165,7 +165,6 @@ int allocate_copy(const std::uint8_t* data, std::size_t size, std::uint8_t** out
     return 1;
 }
 
-// Создание обратимой матрицы и соответствующего ключа расшифрования.
 int generate_keys_alloc(const std::uint8_t* parameters,
                   std::size_t parameters_size,
                   std::uint8_t** encryption_key,
@@ -204,6 +203,8 @@ int generate_keys_alloc(const std::uint8_t* parameters,
 
         if (!allocate_copy(key.data(), key.size(), encryption_key) ||
             !allocate_copy(inverse.data(), inverse.size(), decryption_key)) {
+            if (*encryption_key != nullptr) OPENSSL_cleanse(*encryption_key, key.size());
+            if (*decryption_key != nullptr) OPENSSL_cleanse(*decryption_key, inverse.size());
             std::free(*encryption_key);
             std::free(*decryption_key);
             *encryption_key = nullptr;
@@ -390,7 +391,6 @@ void transform_pair(const std::uint8_t* key,
     output[1] = mod_256(first * key[1] + second * key[3]);
 }
 
-// Потоковое шифрование: заголовок, пары байтов и дополнение PKCS7.
 int encrypt_stream_impl(ConstBuffer key,
                         std::uint64_t input_size,
                         const std::uint8_t* input_digest,
@@ -446,7 +446,6 @@ int encrypt_stream_impl(ConstBuffer key,
     return reader.at_end() && writer.finish() ? 1 : 0;
 }
 
-// Обратное преобразование блоков с проверкой дополнения и контрольной суммы.
 int decrypt_stream_impl(ConstBuffer key,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,

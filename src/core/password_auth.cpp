@@ -22,7 +22,6 @@
 
 namespace {
 
-// Параметры формирования записи пароля и стандартный пароль приложения.
 constexpr int ITERATIONS = 600000;
 constexpr std::size_t SALT_SIZE = 16;
 constexpr std::size_t HASH_SIZE = 32;
@@ -87,7 +86,6 @@ bool from_hex(const std::string& text, unsigned char* output, std::size_t size) 
     return true;
 }
 
-// PBKDF2 получает проверочное значение из пароля и случайной соли.
 bool derive_hash(const std::string& password,
                  const unsigned char* salt,
                  int iterations,
@@ -99,6 +97,13 @@ bool derive_hash(const std::string& password,
 
 // На время ввода отключается отображение символов в терминале.
 std::string read_password(const std::string& prompt, std::string& error) {
+    constexpr std::size_t MAX_PASSWORD_SIZE = 1024;
+    std::array<char, MAX_PASSWORD_SIZE> password_buffer{};
+    MemoryWiper buffer_wiper{password_buffer.data(), password_buffer.size()};
+    std::size_t length = 0;
+    bool too_long = false;
+    char symbol = 0;
+    MemoryWiper symbol_wiper{&symbol, sizeof(symbol)};
 #ifdef _WIN32
     HANDLE console = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -113,12 +118,11 @@ std::string read_password(const std::string& prompt, std::string& error) {
     DWORD written = 0;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), prompt.data(),
               static_cast<DWORD>(prompt.size()), &written, nullptr);
-    std::string password;
-    char symbol = 0;
     DWORD read = 0;
     while (ReadConsoleA(console, &symbol, 1, &read, nullptr) && read == 1 &&
            symbol != '\r' && symbol != '\n') {
-        password.push_back(symbol);
+        if (length < password_buffer.size()) password_buffer[length++] = symbol;
+        else too_long = true;
     }
     if (changed) SetConsoleMode(console, original_mode);
     CloseHandle(console);
@@ -142,10 +146,9 @@ std::string read_password(const std::string& prompt, std::string& error) {
         error = "Не удалось вывести приглашение для ввода пароля.";
         return {};
     }
-    std::string password;
-    char symbol = 0;
     while (read(console, &symbol, 1) == 1 && symbol != '\n' && symbol != '\r') {
-        password.push_back(symbol);
+        if (length < password_buffer.size()) password_buffer[length++] = symbol;
+        else too_long = true;
     }
     if (changed) tcsetattr(console, TCSAFLUSH, &original_settings);
     if (!write_terminal(console, "\n", 1)) {
@@ -153,7 +156,11 @@ std::string read_password(const std::string& prompt, std::string& error) {
     }
     close(console);
 #endif
-    return password;
+    if (too_long) {
+        error = "Пароль не должен превышать 1024 символа.";
+        return {};
+    }
+    return std::string(password_buffer.data(), length);
 }
 
 bool save_record(const std::filesystem::path& path,
@@ -196,7 +203,6 @@ bool save_record(const std::filesystem::path& path,
 
 }
 
-// В файл записываются соль и хеш; сам пароль в открытом виде не сохраняется.
 bool create_password_record(const std::filesystem::path& path,
                             const std::string& password,
                             std::string& error) {
@@ -221,7 +227,6 @@ bool create_password_record(const std::filesystem::path& path,
     return save_record(path, record, error);
 }
 
-// Проверка структуры записи и сравнение хеша введённого пароля.
 bool verify_password_record(const std::filesystem::path& path,
                             const std::string& password,
                             std::string& error) {
@@ -273,7 +278,6 @@ bool verify_password_record(const std::filesystem::path& path,
     return true;
 }
 
-// При первом запуске создаётся запись, затем запрашивается пароль для входа.
 bool authenticate_user() {
     const std::filesystem::path password_path("config/access.dat");
     std::error_code filesystem_error;
