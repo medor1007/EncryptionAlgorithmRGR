@@ -19,6 +19,8 @@
 
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #else
 #define NOMINMAX
 #include <windows.h>
@@ -87,18 +89,37 @@ bool read_file(const std::string& path, SecureBytes& data) {
     return read_key_stream(file.get(), data);
 }
 
+FilePtr create_private_output(const std::filesystem::path& path) {
+#ifndef _WIN32
+    const int descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    if (descriptor < 0) return {};
+    FILE* file = fdopen(descriptor, "wb");
+    if (file == nullptr) {
+        close(descriptor);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+#else
+    FILE* file = std::fopen(path.string().c_str(), "wbx");
+#endif
+    if (file != nullptr && std::setvbuf(file, nullptr, _IONBF, 0) != 0) {
+        std::fclose(file);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+        return {};
+    }
+    return FilePtr(file);
+}
+
 bool write_file(const std::string& path, const std::uint8_t* data, std::size_t size) {
     const std::filesystem::path destination(path);
     const std::filesystem::path temporary = path + ".tmp";
     {
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        FilePtr file = create_private_output(temporary);
         if (!file) return false;
-        if (size != 0) {
-            file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
-        }
-        file.flush();
-        if (!file.good()) {
-            file.close();
+        if ((size != 0 && std::fwrite(data, 1, size, file.get()) != size) ||
+            std::fflush(file.get()) != 0) {
+            file.reset();
             std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
             return false;
@@ -309,8 +330,9 @@ bool commit_cli_output(const std::string& path, FILE* spool) {
     if (!prepare_output_directory(path)) return false;
     const std::filesystem::path destination(path);
     const std::filesystem::path temporary = path + ".tmp";
-    FilePtr output(std::fopen(temporary.string().c_str(), "wb"));
-    if (!output || !copy_file_stream(spool, output.get()) || std::fflush(output.get()) != 0) {
+    FilePtr output = create_private_output(temporary);
+    if (!output) return false;
+    if (!copy_file_stream(spool, output.get()) || std::fflush(output.get()) != 0) {
         output.reset();
         std::error_code ignored;
         std::filesystem::remove(temporary, ignored);
@@ -593,11 +615,11 @@ int main(int argc, char* argv[]) {
         std::cerr << "Не удалось настроить стандартные потоки.\n";
         return 1;
     }
-    if (!authenticate_user()) {
-        std::cerr << "Доступ к программе закрыт.\n";
-        return 1;
-    }
     try {
+        if (!authenticate_user()) {
+            std::cerr << "Доступ к программе закрыт.\n";
+            return 1;
+        }
         if (options.menu) return run_interactive_menu(executable_path);
         return execute_cli(options, executable_path);
     } catch (const std::exception& exception) {
