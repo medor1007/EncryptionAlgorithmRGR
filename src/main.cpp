@@ -1,7 +1,9 @@
 #include "core/cipher_module.hpp"
+#include "core/command_line.hpp"
 #include "core/password_auth.hpp"
 
 #include <filesystem>
+#include <array>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -513,6 +515,184 @@ std::string key_prefix(Cipher cipher) {
     return cipher == Cipher::Hill ? "keys/hill" : "keys/elgamal";
 }
 
+struct OwnedModuleBuffer {
+    const CipherModuleApi* api = nullptr;
+    std::uint8_t* data = nullptr;
+
+    ~OwnedModuleBuffer() {
+        if (api != nullptr && data != nullptr) api->free_buffer(data);
+    }
+};
+
+constexpr std::array<std::uint8_t, 8> kKeyPairMagic{
+    'C', 'R', 'Y', 'P', 'K', 'E', 'Y', '1'};
+
+void append_u64(std::vector<std::uint8_t>& output, std::uint64_t value) {
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        output.push_back(static_cast<std::uint8_t>(value >> (index * 8)));
+    }
+}
+
+bool read_u64(const std::vector<std::uint8_t>& input,
+              std::size_t offset,
+              std::uint64_t& value) {
+    if (offset > input.size() || input.size() - offset < sizeof(value)) return false;
+    value = 0;
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        value |= static_cast<std::uint64_t>(input[offset + index]) << (index * 8);
+    }
+    return true;
+}
+
+bool generate_key_pair(const CipherModule& module,
+                       std::vector<std::uint8_t>& encryption_key,
+                       std::vector<std::uint8_t>& decryption_key) {
+    const auto* api = module.api();
+    OwnedModuleBuffer encryption{api};
+    OwnedModuleBuffer decryption{api};
+    std::size_t encryption_size = 0;
+    std::size_t decryption_size = 0;
+    if (api->generate_keys(nullptr, 0, &encryption.data, &encryption_size,
+                           &decryption.data, &decryption_size) == 0 ||
+        encryption.data == nullptr || decryption.data == nullptr ||
+        encryption_size == 0 || decryption_size == 0) {
+        return false;
+    }
+    encryption_key.assign(encryption.data, encryption.data + encryption_size);
+    decryption_key.assign(decryption.data, decryption.data + decryption_size);
+    return true;
+}
+
+std::vector<std::uint8_t> make_key_pair_record(
+    const std::vector<std::uint8_t>& encryption_key,
+    const std::vector<std::uint8_t>& decryption_key) {
+    std::vector<std::uint8_t> record(kKeyPairMagic.begin(), kKeyPairMagic.end());
+    append_u64(record, encryption_key.size());
+    append_u64(record, decryption_key.size());
+    record.insert(record.end(), encryption_key.begin(), encryption_key.end());
+    record.insert(record.end(), decryption_key.begin(), decryption_key.end());
+    return record;
+}
+
+bool select_key(const std::vector<std::uint8_t>& record,
+                OperationMode mode,
+                std::vector<std::uint8_t>& key) {
+    if (record.size() < kKeyPairMagic.size() + 2 * sizeof(std::uint64_t) ||
+        !std::equal(kKeyPairMagic.begin(), kKeyPairMagic.end(), record.begin())) {
+        key = record;
+        return !key.empty();
+    }
+    std::uint64_t encryption_size = 0;
+    std::uint64_t decryption_size = 0;
+    constexpr std::size_t lengths_offset = kKeyPairMagic.size();
+    constexpr std::size_t data_offset = lengths_offset + 2 * sizeof(std::uint64_t);
+    if (!read_u64(record, lengths_offset, encryption_size) ||
+        !read_u64(record, lengths_offset + sizeof(std::uint64_t), decryption_size) ||
+        encryption_size > record.size() - data_offset ||
+        decryption_size != record.size() - data_offset - encryption_size) {
+        return false;
+    }
+    const std::size_t selected_offset = mode == OperationMode::Encrypt
+        ? data_offset
+        : data_offset + static_cast<std::size_t>(encryption_size);
+    const std::size_t selected_size = static_cast<std::size_t>(
+        mode == OperationMode::Encrypt ? encryption_size : decryption_size);
+    if (selected_size == 0) return false;
+    key.assign(record.begin() + static_cast<std::ptrdiff_t>(selected_offset),
+               record.begin() + static_cast<std::ptrdiff_t>(selected_offset + selected_size));
+    return true;
+}
+
+bool read_cli_input(const std::string& path, std::vector<std::uint8_t>& data) {
+    if (path != "-") return read_file(path, data);
+    data.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
+    return !std::cin.bad();
+}
+
+bool write_cli_output(const std::string& path,
+                      const std::uint8_t* data,
+                      std::size_t size) {
+    if (path == "-") {
+        if (size != 0) {
+            std::cout.write(reinterpret_cast<const char*>(data),
+                            static_cast<std::streamsize>(size));
+        }
+        return std::cout.good();
+    }
+    if (!prepare_output_directory(path)) return false;
+    return write_file(path, data, size);
+}
+
+int execute_cli(const CommandLineOptions& options, const char* executable_path) {
+    const Cipher cipher = options.algorithm == "hill" ? Cipher::Hill : Cipher::ElGamal;
+    CipherModule module;
+    std::string error;
+    if (!module.load(module_path(cipher, executable_path).string(), error)) {
+        std::cerr << "Не удалось загрузить модуль алгоритма: " << error << '\n';
+        return 1;
+    }
+
+    std::vector<std::uint8_t> encryption_key;
+    std::vector<std::uint8_t> decryption_key;
+    if (options.mode == OperationMode::GenerateKey || options.generate_key) {
+        if (!generate_key_pair(module, encryption_key, decryption_key)) {
+            std::cerr << "Не удалось сгенерировать ключи.\n";
+            return 1;
+        }
+        const auto key_record = make_key_pair_record(encryption_key, decryption_key);
+        if (options.write_key) {
+            if (!write_cli_output("-", key_record.data(), key_record.size())) {
+                std::cerr << "Не удалось вывести ключи в стандартный поток.\n";
+                return 1;
+            }
+            return 0;
+        }
+        if (options.save_key_path.empty() ||
+            !write_cli_output(options.save_key_path, key_record.data(), key_record.size())) {
+            std::cerr << "Не удалось сохранить пару ключей.\n";
+            return 1;
+        }
+        if (options.mode == OperationMode::GenerateKey) return 0;
+    } else {
+        std::vector<std::uint8_t> key_record;
+        const bool key_read = options.key_path == "-"
+            ? (key_record.assign(std::istreambuf_iterator<char>(std::cin),
+                                 std::istreambuf_iterator<char>()), !std::cin.bad())
+            : read_file(options.key_path, key_record);
+        if (!key_read ||
+            !select_key(key_record, options.mode, encryption_key)) {
+            std::cerr << "Не удалось прочитать ключ из «" << options.key_path << "».\n";
+            return 1;
+        }
+    }
+
+    const auto* api = module.api();
+    const std::vector<std::uint8_t>& key = encryption_key;
+    std::vector<std::uint8_t> input;
+    if (!read_cli_input(options.input_path, input)) {
+        std::cerr << "Не удалось прочитать входные данные.\n";
+        return 1;
+    }
+    OwnedModuleBuffer result{api};
+    std::size_t result_size = 0;
+    const int succeeded = options.mode == OperationMode::Encrypt
+        ? api->encrypt(key.data(), key.size(), input.data(), input.size(),
+                       &result.data, &result_size)
+        : api->decrypt(key.data(), key.size(), input.data(), input.size(),
+                       &result.data, &result_size);
+    if (succeeded == 0) {
+        std::cerr << (options.mode == OperationMode::Encrypt
+            ? "Не удалось зашифровать входные данные.\n"
+            : "Не удалось расшифровать входные данные. Проверьте ключ и контейнер.\n");
+        return 1;
+    }
+    if (!write_cli_output(options.output_path, result.data, result_size)) {
+        std::cerr << "Не удалось записать результат.\n";
+        return 1;
+    }
+    return 0;
+}
+
 // Меню выбранного алгоритма.
 void show_cipher_menu(Cipher cipher, const char* executable_path) {
     const auto path = module_path(cipher, executable_path);
@@ -587,31 +767,48 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
 
 // Главное меню приложения.
 int main(int argc, char* argv[]) {
+    const char* executable_path = argc > 0 ? argv[0] : "encryption_rgr";
+    CommandLineOptions options;
+    std::string error;
+    const ParseResult result = parse_command_line(argc, argv, options, error);
+    if (result == ParseResult::Help) {
+        std::cout << command_line_help(executable_path);
+        return 0;
+    }
+    if (result == ParseResult::Error) {
+        std::cerr << error << '\n' << command_line_help(executable_path);
+        return 2;
+    }
     if (!authenticate_user()) {
-        std::cout << "Доступ к программе закрыт.\n";
+        std::cerr << "Доступ к программе закрыт.\n";
         return 1;
     }
-    const char* executable_path = argc > 0 ? argv[0] : "encryption_rgr";
-    while (true) {
-        std::cout << "\nПрограмма-шифратор и дешифратор\n\n"
-                  << "1. Шифр Хилла\n"
-                  << "2. Шифр Эль-Гамаля\n"
-                  << "0. Выход\n";
-
-        const int choice = read_choice(0, 2);
-        if (choice == 0) {
-            std::cout << "Вы вышли из программы.\n";
-            return 0;
+    if (options.menu) {
+        while (true) {
+            std::cout << "\nПрограмма-шифратор и дешифратор\n\n"
+                      << "1. Шифр Хилла\n"
+                      << "2. Шифр Эль-Гамаля\n"
+                      << "0. Выход\n";
+            const int choice = read_choice(0, 2);
+            if (choice == 0) {
+                std::cout << "Вы вышли из программы.\n";
+                return 0;
+            }
+            try {
+                show_cipher_menu(choice == 1 ? Cipher::Hill : Cipher::ElGamal,
+                                 executable_path);
+            } catch (const std::exception& exception) {
+                std::cerr << "Операция прервана из-за ошибки: " << exception.what() << '\n';
+            }
         }
-        try {
-            show_cipher_menu(choice == 1 ? Cipher::Hill : Cipher::ElGamal,
-                             executable_path);
-        } catch (const std::exception& error) {
-            std::cout << "Операция прервана из-за ошибки: " << error.what()
-                      << ". Возврат в главное меню.\n";
-        } catch (...) {
-            std::cout << "Операция прервана из-за неизвестной ошибки. "
-                         "Возврат в главное меню.\n";
-        }
+    }
+    try {
+        return execute_cli(options, executable_path);
+    } catch (const std::exception& exception) {
+        std::cerr << "Операция прервана из-за ошибки: " << exception.what() << '\n';
+        return 1;
+    } catch (...) {
+        std::cerr << "Операция прервана из-за неизвестной ошибки.\n";
+        return 1;
     }
 }

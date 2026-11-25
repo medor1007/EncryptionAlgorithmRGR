@@ -10,6 +10,7 @@ add_executable(encryption_rgr
     src/main.cpp
     src/core/dynamic_library.cpp
     src/core/cipher_module.cpp
+    src/core/command_line.cpp
     src/core/password_auth.cpp
 )
 
@@ -49,17 +50,16 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(encryption_rgr PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
-target_compile_options(encryption_rgr PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
-)
+function(enable_strict_warnings target_name)
+    target_compile_options(${target_name} PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Werror>
+        $<$<CXX_COMPILER_ID:MSVC>:/W4;/WX>
+    )
+endfunction()
 
-target_compile_options(cipher_hill PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
-)
-
-target_compile_options(cipher_elgamal PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
-)
+enable_strict_warnings(encryption_rgr)
+enable_strict_warnings(cipher_hill)
+enable_strict_warnings(cipher_elgamal)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -72,12 +72,10 @@ if(BUILD_TESTING)
         include
         src
     )
+    enable_strict_warnings(cipher_module_test)
     if(UNIX AND NOT APPLE)
         target_link_libraries(cipher_module_test PRIVATE ${CMAKE_DL_LIBS})
     endif()
-    target_compile_options(cipher_module_test PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
-    )
     add_dependencies(cipher_module_test cipher_hill cipher_elgamal)
     add_test(NAME cipher_modules_round_trip
         COMMAND cipher_module_test
@@ -96,4 +94,13 @@ if(BUILD_TESTING)
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
     )
     add_test(NAME password_authentication COMMAND password_auth_test)
+    enable_strict_warnings(password_auth_test)
+
+    add_executable(command_line_test
+        tests/command_line_test.cpp
+        src/core/command_line.cpp
+    )
+    target_include_directories(command_line_test PRIVATE src)
+    enable_strict_warnings(command_line_test)
+    add_test(NAME command_line_validation COMMAND command_line_test)
 endif()

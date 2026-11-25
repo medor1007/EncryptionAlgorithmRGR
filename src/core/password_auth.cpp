@@ -13,6 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
@@ -68,32 +69,53 @@ bool derive_hash(const std::string& password,
 }
 
 // Ввод пароля без отображения символов.
-std::string read_password(const std::string& prompt) {
-    std::cout << prompt;
+std::string read_password(const std::string& prompt, std::string& error) {
 #ifdef _WIN32
-    HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE console = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                 OPEN_EXISTING, 0, nullptr);
+    if (console == INVALID_HANDLE_VALUE) {
+        error = "Для ввода пароля требуется доступная консоль.";
+        return {};
+    }
     DWORD original_mode = 0;
-    const bool changed = console != INVALID_HANDLE_VALUE &&
-                         GetConsoleMode(console, &original_mode) != 0 &&
+    const bool changed = GetConsoleMode(console, &original_mode) != 0 &&
                          SetConsoleMode(console, original_mode & ~ENABLE_ECHO_INPUT) != 0;
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), prompt.data(),
+              static_cast<DWORD>(prompt.size()), &written, nullptr);
     std::string password;
-    std::getline(std::cin, password);
+    char symbol = 0;
+    DWORD read = 0;
+    while (ReadConsoleA(console, &symbol, 1, &read, nullptr) && read == 1 &&
+           symbol != '\r' && symbol != '\n') {
+        password.push_back(symbol);
+    }
     if (changed) SetConsoleMode(console, original_mode);
+    CloseHandle(console);
+    std::cerr << '\n';
 #else
+    const int console = open("/dev/tty", O_RDWR | O_CLOEXEC);
+    if (console < 0) {
+        error = "Для парольной проверки требуется подключённый терминал (/dev/tty).";
+        return {};
+    }
     termios original_settings{};
-    const bool changed = isatty(STDIN_FILENO) &&
-                         tcgetattr(STDIN_FILENO, &original_settings) == 0;
+    const bool changed = tcgetattr(console, &original_settings) == 0;
     if (changed) {
         termios hidden_settings = original_settings;
         hidden_settings.c_lflag &= static_cast<tcflag_t>(~ECHO);
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden_settings);
+        tcsetattr(console, TCSAFLUSH, &hidden_settings);
     }
+    static_cast<void>(write(console, prompt.data(), prompt.size()));
     std::string password;
-    std::getline(std::cin, password);
-    if (changed) {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_settings);
-        std::cout << '\n';
+    char symbol = 0;
+    while (read(console, &symbol, 1) == 1 && symbol != '\n' && symbol != '\r') {
+        password.push_back(symbol);
     }
+    if (changed) tcsetattr(console, TCSAFLUSH, &original_settings);
+    static_cast<void>(write(console, "\n", 1));
+    close(console);
 #endif
     return password;
 }
@@ -214,24 +236,28 @@ bool authenticate_user() {
     std::error_code filesystem_error;
     const bool exists = std::filesystem::exists(password_path, filesystem_error);
     if (filesystem_error) {
-        std::cout << "Не удалось проверить файл пароля: " << filesystem_error.message() << '\n';
+        std::cerr << "Не удалось проверить файл пароля: " << filesystem_error.message() << '\n';
         return false;
     }
 
     std::string error;
     if (!exists) {
         if (!create_password_record(password_path, kDefaultPassword, error)) {
-            std::cout << error << '\n';
+            std::cerr << error << '\n';
             return false;
         }
-        std::cout << "Создан файл настроек для стандартного пароля.\n";
+        std::cerr << "Создан файл настроек для стандартного пароля.\n";
     }
 
-    const std::string password = read_password("Введите пароль: ");
-    if (!verify_password_record(password_path, password, error)) {
-        std::cout << error << '\n';
+    const std::string password = read_password("Введите пароль: ", error);
+    if (!error.empty()) {
+        std::cerr << error << '\n';
         return false;
     }
-    std::cout << "Вход выполнен.\n";
+    if (!verify_password_record(password_path, password, error)) {
+        std::cerr << error << '\n';
+        return false;
+    }
+    std::cerr << "Вход выполнен.\n";
     return true;
 }
