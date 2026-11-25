@@ -22,6 +22,7 @@ public:
 
 private:
     DynamicLibrary library_;
+    CipherModuleApi api_storage_{};
     const CipherModuleApi* api_ = nullptr;
 };
 

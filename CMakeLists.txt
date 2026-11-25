@@ -6,12 +6,23 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(CMAKE_CONFIGURATION_TYPES)
+    set(APP_RUNTIME_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>")
+    set(MODULE_RUNTIME_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/modules")
+else()
+    set(APP_RUNTIME_DIRECTORY "${CMAKE_BINARY_DIR}")
+    set(MODULE_RUNTIME_DIRECTORY "${CMAKE_BINARY_DIR}/modules")
+endif()
+
 add_executable(encryption_rgr
     src/main.cpp
     src/core/dynamic_library.cpp
     src/core/cipher_module.cpp
     src/core/command_line.cpp
     src/core/password_auth.cpp
+)
+set_target_properties(encryption_rgr PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${APP_RUNTIME_DIRECTORY}"
 )
 
 add_library(cipher_hill SHARED
@@ -21,8 +32,8 @@ add_library(cipher_hill SHARED
 target_include_directories(cipher_hill PRIVATE include)
 target_compile_definitions(cipher_hill PRIVATE CIPHER_MODULE_BUILD)
 set_target_properties(cipher_hill PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
+    LIBRARY_OUTPUT_DIRECTORY "${MODULE_RUNTIME_DIRECTORY}"
+    RUNTIME_OUTPUT_DIRECTORY "${MODULE_RUNTIME_DIRECTORY}"
 )
 
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -37,8 +48,8 @@ target_include_directories(cipher_elgamal PRIVATE include)
 target_compile_definitions(cipher_elgamal PRIVATE CIPHER_MODULE_BUILD)
 target_link_libraries(cipher_elgamal PRIVATE OpenSSL::Crypto)
 set_target_properties(cipher_elgamal PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules"
+    LIBRARY_OUTPUT_DIRECTORY "${MODULE_RUNTIME_DIRECTORY}"
+    RUNTIME_OUTPUT_DIRECTORY "${MODULE_RUNTIME_DIRECTORY}"
 )
 
 target_include_directories(encryption_rgr PRIVATE
@@ -63,22 +74,22 @@ enable_strict_warnings(cipher_elgamal)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(cipher_module_test
+    add_executable(crypto_tests
         tests/cipher_module_test.cpp
         src/core/dynamic_library.cpp
         src/core/cipher_module.cpp
     )
-    target_include_directories(cipher_module_test PRIVATE
+    target_include_directories(crypto_tests PRIVATE
         include
         src
     )
-    enable_strict_warnings(cipher_module_test)
+    enable_strict_warnings(crypto_tests)
     if(UNIX AND NOT APPLE)
-        target_link_libraries(cipher_module_test PRIVATE ${CMAKE_DL_LIBS})
+        target_link_libraries(crypto_tests PRIVATE ${CMAKE_DL_LIBS})
     endif()
-    add_dependencies(cipher_module_test cipher_hill cipher_elgamal)
+    add_dependencies(crypto_tests cipher_hill cipher_elgamal)
     add_test(NAME cipher_modules_round_trip
-        COMMAND cipher_module_test
+        COMMAND crypto_tests
             $<TARGET_FILE:cipher_hill>
             $<TARGET_FILE:cipher_elgamal>
     )

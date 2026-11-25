@@ -28,6 +28,21 @@ constexpr std::size_t kHashSize = 32;
 constexpr char kRecordVersion[] = "RGRPASS1";
 constexpr char kDefaultPassword[] = "qwerty123";
 
+struct MemoryWiper {
+    void* data;
+    std::size_t size;
+    ~MemoryWiper() {
+        if (data != nullptr && size != 0) OPENSSL_cleanse(data, size);
+    }
+};
+
+struct StringWiper {
+    std::string& value;
+    ~StringWiper() {
+        if (!value.empty()) OPENSSL_cleanse(value.data(), value.size());
+    }
+};
+
 // Преобразование двоичных данных для файла настроек.
 std::string to_hex(const unsigned char* bytes, std::size_t size) {
     static constexpr char digits[] = "0123456789abcdef";
@@ -171,14 +186,17 @@ bool create_password_record(const std::filesystem::path& path,
 
     std::array<unsigned char, kSaltSize> salt{};
     std::array<unsigned char, kHashSize> hash{};
+    MemoryWiper salt_wiper{salt.data(), salt.size()};
+    MemoryWiper hash_wiper{hash.data(), hash.size()};
     if (RAND_bytes(salt.data(), static_cast<int>(salt.size())) != 1 ||
         !derive_hash(password, salt.data(), kIterations, hash.data())) {
         error = "Не удалось подготовить криптографическую запись пароля.";
         return false;
     }
-    const std::string record = std::string(kRecordVersion) + "$" +
+    std::string record = std::string(kRecordVersion) + "$" +
         std::to_string(kIterations) + "$" + to_hex(salt.data(), salt.size()) + "$" +
         to_hex(hash.data(), hash.size());
+    StringWiper record_wiper{record};
     return save_record(path, record, error);
 }
 
@@ -217,6 +235,9 @@ bool verify_password_record(const std::filesystem::path& path,
     std::array<unsigned char, kSaltSize> salt{};
     std::array<unsigned char, kHashSize> expected_hash{};
     std::array<unsigned char, kHashSize> actual_hash{};
+    MemoryWiper salt_wiper{salt.data(), salt.size()};
+    MemoryWiper expected_hash_wiper{expected_hash.data(), expected_hash.size()};
+    MemoryWiper actual_hash_wiper{actual_hash.data(), actual_hash.size()};
     if (!from_hex(salt_text, salt.data(), salt.size()) ||
         !from_hex(hash_text, expected_hash.data(), expected_hash.size()) ||
         !derive_hash(password, salt.data(), iterations, actual_hash.data())) {
@@ -249,7 +270,8 @@ bool authenticate_user() {
         std::cerr << "Создан файл настроек для стандартного пароля.\n";
     }
 
-    const std::string password = read_password("Введите пароль: ", error);
+    std::string password = read_password("Введите пароль: ", error);
+    StringWiper password_wiper{password};
     if (!error.empty()) {
         std::cerr << error << '\n';
         return false;

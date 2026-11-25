@@ -2,6 +2,8 @@
 #include "core/command_line.hpp"
 #include "core/password_auth.hpp"
 
+#include <openssl/crypto.h>
+
 #include <filesystem>
 #include <array>
 #include <cstdio>
@@ -16,6 +18,8 @@
 #else
 #define NOMINMAX
 #include <windows.h>
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 namespace {
@@ -23,6 +27,20 @@ namespace {
 enum class Cipher {
     Hill,
     ElGamal,
+};
+
+struct VectorCleanser {
+    std::vector<std::uint8_t>& bytes;
+    ~VectorCleanser() {
+        if (!bytes.empty()) OPENSSL_cleanse(bytes.data(), bytes.size());
+    }
+};
+
+struct StringCleanser {
+    std::string& text;
+    ~StringCleanser() {
+        if (!text.empty()) OPENSSL_cleanse(text.data(), text.size());
+    }
 };
 
 // Ввод команд и путей.
@@ -86,6 +104,13 @@ bool write_file(const std::string& path, const std::uint8_t* data, std::size_t s
             return false;
         }
     }
+#ifndef _WIN32
+    if (chmod(temporary.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        return false;
+    }
+#endif
 #ifdef _WIN32
     if (!MoveFileExW(temporary.c_str(), destination.c_str(),
                      MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
@@ -247,6 +272,30 @@ bool hex_to_bytes(const std::string& text, std::vector<std::uint8_t>& data) {
     return true;
 }
 
+bool transform_data(const CipherModuleApi* api,
+                    bool encrypting,
+                    const std::vector<std::uint8_t>& key,
+                    const std::vector<std::uint8_t>& input,
+                    std::vector<std::uint8_t>& output) {
+    const int operation = encrypting ? CIPHER_OPERATION_ENCRYPT
+                                    : CIPHER_OPERATION_DECRYPT;
+    const std::size_t capacity = api->get_output_size(input.size(), operation);
+    if (capacity == 0) return false;
+    output.resize(capacity);
+    MutBuffer output_buffer{output.data(), output.size()};
+    const ConstBuffer key_buffer{key.data(), key.size()};
+    const ConstBuffer input_buffer{input.data(), input.size()};
+    const int succeeded = encrypting
+        ? api->encrypt(key_buffer, input_buffer, &output_buffer)
+        : api->decrypt(key_buffer, input_buffer, &output_buffer);
+    if (succeeded == 0 || output_buffer.size > output.size()) {
+        output.clear();
+        return false;
+    }
+    output.resize(output_buffer.size);
+    return true;
+}
+
 bool load_key(const std::string& path, std::vector<std::uint8_t>& key) {
     if (!read_file(path, key) || key.empty()) {
         std::cout << "Не удалось прочитать ключ «" << path
@@ -289,8 +338,8 @@ bool generate_keys(const CipherModule& module, const std::string& key_prefix) {
     const std::filesystem::path decryption_path = key_prefix + "_decryption.key";
     const bool saved = save_generated_key(encryption_path, encryption_key, encryption_key_size) &&
                        save_generated_key(decryption_path, decryption_key, decryption_key_size);
-    api->free_buffer(encryption_key);
-    api->free_buffer(decryption_key);
+    api->free_buffer(encryption_key, encryption_key_size);
+    api->free_buffer(decryption_key, decryption_key_size);
 
     if (!saved) {
         std::cout << "Не удалось сохранить файлы ключей.\n";
@@ -344,58 +393,60 @@ bool prepare_keys(const CipherModule& module, const std::string& key_prefix) {
 void encrypt_text(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
+    VectorCleanser key_cleanser{key};
     if (!load_key(key_path, key)) {
         return;
     }
 
     std::cout << "Введите текст для шифрования: ";
     std::string text;
+    StringCleanser text_cleanser{text};
     if (!std::getline(std::cin, text)) {
         return;
     }
 
-    std::uint8_t* output = nullptr;
-    std::size_t output_size = 0;
-    if (api->encrypt(key.data(), key.size(),
-                     reinterpret_cast<const std::uint8_t*>(text.data()), text.size(),
-                     &output, &output_size) == 0) {
+    std::vector<std::uint8_t> plaintext(text.begin(), text.end());
+    VectorCleanser plaintext_cleanser{plaintext};
+    std::vector<std::uint8_t> output;
+    VectorCleanser output_cleanser{output};
+    if (!transform_data(api, true, key, plaintext, output)) {
         std::cout << "Не удалось зашифровать текст.\n";
         return;
     }
     std::cout << "Результат в шестнадцатеричном виде:\n"
-              << bytes_to_hex(output, output_size) << '\n';
-    api->free_buffer(output);
+              << bytes_to_hex(output.data(), output.size()) << '\n';
 }
 
 void decrypt_text(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
+    VectorCleanser key_cleanser{key};
     if (!load_key(key_path, key)) {
         return;
     }
 
     std::cout << "Введите результат шифрования в шестнадцатеричном виде: ";
     std::string text;
+    StringCleanser text_cleanser{text};
     std::vector<std::uint8_t> ciphertext;
+    VectorCleanser ciphertext_cleanser{ciphertext};
     if (!std::getline(std::cin, text) || !hex_to_bytes(text, ciphertext)) {
         std::cout << "Неверный формат шестнадцатеричных данных.\n";
         return;
     }
 
-    std::uint8_t* output = nullptr;
-    std::size_t output_size = 0;
-    if (api->decrypt(key.data(), key.size(), ciphertext.data(), ciphertext.size(),
-                     &output, &output_size) == 0) {
+    std::vector<std::uint8_t> output;
+    VectorCleanser output_cleanser{output};
+    if (!transform_data(api, false, key, ciphertext, output)) {
         std::cout << "Не удалось расшифровать текст. Проверьте ключ и данные.\n";
         return;
     }
     std::cout << "Расшифрованный текст:\n";
-    if (output_size != 0) {
-        std::cout.write(reinterpret_cast<const char*>(output),
-                        static_cast<std::streamsize>(output_size));
+    if (!output.empty()) {
+        std::cout.write(reinterpret_cast<const char*>(output.data()),
+                        static_cast<std::streamsize>(output.size()));
     }
     std::cout << '\n';
-    api->free_buffer(output);
 }
 
 // Шифрование и расшифрование файлов.
@@ -403,6 +454,8 @@ void encrypt_file(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
     std::vector<std::uint8_t> input;
+    VectorCleanser key_cleanser{key};
+    VectorCleanser input_cleanser{input};
     if (!load_key(key_path, key)) {
         return;
     }
@@ -421,22 +474,19 @@ void encrypt_file(const CipherModule& module, const std::string& key_path) {
         return;
     }
 
-    std::uint8_t* ciphertext = nullptr;
-    std::size_t ciphertext_size = 0;
+    std::vector<std::uint8_t> ciphertext;
+    VectorCleanser ciphertext_cleanser{ciphertext};
     std::cout << "Выполняется шифрование файла.\n";
-    if (api->encrypt(key.data(), key.size(), input.data(), input.size(),
-                     &ciphertext, &ciphertext_size) == 0) {
+    if (!transform_data(api, true, key, input, ciphertext)) {
         std::cout << "Не удалось зашифровать файл.\n";
         return;
     }
 
-    const std::string encoded = bytes_to_hex(ciphertext, ciphertext_size);
+    const std::string encoded = bytes_to_hex(ciphertext.data(), ciphertext.size());
     if (!prepare_output_file(output_path)) {
-        api->free_buffer(ciphertext);
         return;
     }
     const bool saved = write_text_file(output_path, encoded);
-    api->free_buffer(ciphertext);
     if (!saved) {
         std::cout << "Не удалось записать файл «" << output_path << "». Проверьте путь и права доступа.\n";
         return;
@@ -448,6 +498,8 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
     const CipherModuleApi* api = module.api();
     std::vector<std::uint8_t> key;
     std::vector<std::uint8_t> encoded;
+    VectorCleanser key_cleanser{key};
+    VectorCleanser encoded_cleanser{encoded};
     if (!load_key(key_path, key)) {
         return;
     }
@@ -468,26 +520,24 @@ void decrypt_file(const CipherModule& module, const std::string& key_path) {
 
     const std::string encoded_text(encoded.begin(), encoded.end());
     std::vector<std::uint8_t> ciphertext;
+    VectorCleanser ciphertext_cleanser{ciphertext};
     if (!hex_to_bytes(encoded_text, ciphertext)) {
         std::cout << "Файл не содержит корректные шестнадцатеричные данные.\n";
         return;
     }
 
-    std::uint8_t* plaintext = nullptr;
-    std::size_t plaintext_size = 0;
+    std::vector<std::uint8_t> plaintext;
+    VectorCleanser plaintext_cleanser{plaintext};
     std::cout << "Выполняется расшифрование файла.\n";
-    if (api->decrypt(key.data(), key.size(), ciphertext.data(), ciphertext.size(),
-                     &plaintext, &plaintext_size) == 0) {
+    if (!transform_data(api, false, key, ciphertext, plaintext)) {
         std::cout << "Не удалось расшифровать файл. Проверьте ключ и данные.\n";
         return;
     }
 
     if (!prepare_output_file(output_path)) {
-        api->free_buffer(plaintext);
         return;
     }
-    const bool saved = write_file(output_path, plaintext, plaintext_size);
-    api->free_buffer(plaintext);
+    const bool saved = write_file(output_path, plaintext.data(), plaintext.size());
     if (!saved) {
         std::cout << "Не удалось записать файл «" << output_path << "». Проверьте путь и права доступа.\n";
         return;
@@ -518,9 +568,10 @@ std::string key_prefix(Cipher cipher) {
 struct OwnedModuleBuffer {
     const CipherModuleApi* api = nullptr;
     std::uint8_t* data = nullptr;
+    std::size_t size = 0;
 
     ~OwnedModuleBuffer() {
-        if (api != nullptr && data != nullptr) api->free_buffer(data);
+        if (api != nullptr && data != nullptr) api->free_buffer(data, size);
     }
 };
 
@@ -558,6 +609,8 @@ bool generate_key_pair(const CipherModule& module,
         encryption_size == 0 || decryption_size == 0) {
         return false;
     }
+    encryption.size = encryption_size;
+    decryption.size = decryption_size;
     encryption_key.assign(encryption.data, encryption.data + encryption_size);
     decryption_key.assign(decryption.data, decryption.data + decryption_size);
     return true;
@@ -634,12 +687,15 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
 
     std::vector<std::uint8_t> encryption_key;
     std::vector<std::uint8_t> decryption_key;
+    VectorCleanser encryption_key_cleanser{encryption_key};
+    VectorCleanser decryption_key_cleanser{decryption_key};
     if (options.mode == OperationMode::GenerateKey || options.generate_key) {
         if (!generate_key_pair(module, encryption_key, decryption_key)) {
             std::cerr << "Не удалось сгенерировать ключи.\n";
             return 1;
         }
-        const auto key_record = make_key_pair_record(encryption_key, decryption_key);
+        auto key_record = make_key_pair_record(encryption_key, decryption_key);
+        VectorCleanser key_record_cleanser{key_record};
         if (options.write_key) {
             if (!write_cli_output("-", key_record.data(), key_record.size())) {
                 std::cerr << "Не удалось вывести ключи в стандартный поток.\n";
@@ -655,6 +711,7 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
         if (options.mode == OperationMode::GenerateKey) return 0;
     } else {
         std::vector<std::uint8_t> key_record;
+        VectorCleanser key_record_cleanser{key_record};
         const bool key_read = options.key_path == "-"
             ? (key_record.assign(std::istreambuf_iterator<char>(std::cin),
                                  std::istreambuf_iterator<char>()), !std::cin.bad())
@@ -669,24 +726,21 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     const auto* api = module.api();
     const std::vector<std::uint8_t>& key = encryption_key;
     std::vector<std::uint8_t> input;
+    VectorCleanser input_cleanser{input};
     if (!read_cli_input(options.input_path, input)) {
         std::cerr << "Не удалось прочитать входные данные.\n";
         return 1;
     }
-    OwnedModuleBuffer result{api};
-    std::size_t result_size = 0;
-    const int succeeded = options.mode == OperationMode::Encrypt
-        ? api->encrypt(key.data(), key.size(), input.data(), input.size(),
-                       &result.data, &result_size)
-        : api->decrypt(key.data(), key.size(), input.data(), input.size(),
-                       &result.data, &result_size);
-    if (succeeded == 0) {
+    std::vector<std::uint8_t> result;
+    VectorCleanser result_cleanser{result};
+    if (!transform_data(api, options.mode == OperationMode::Encrypt,
+                        key, input, result)) {
         std::cerr << (options.mode == OperationMode::Encrypt
             ? "Не удалось зашифровать входные данные.\n"
             : "Не удалось расшифровать входные данные. Проверьте ключ и контейнер.\n");
         return 1;
     }
-    if (!write_cli_output(options.output_path, result.data, result_size)) {
+    if (!write_cli_output(options.output_path, result.data(), result.size())) {
         std::cerr << "Не удалось записать результат.\n";
         return 1;
     }
@@ -767,6 +821,10 @@ void show_cipher_menu(Cipher cipher, const char* executable_path) {
 
 // Главное меню приложения.
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     const char* executable_path = argc > 0 ? argv[0] : "encryption_rgr";
     CommandLineOptions options;
     std::string error;
@@ -779,6 +837,12 @@ int main(int argc, char* argv[]) {
         std::cerr << error << '\n' << command_line_help(executable_path);
         return 2;
     }
+#ifdef _WIN32
+    if (!options.menu) {
+        _setmode(_fileno(stdin), _O_BINARY);
+        _setmode(_fileno(stdout), _O_BINARY);
+    }
+#endif
     if (!authenticate_user()) {
         std::cerr << "Доступ к программе закрыт.\n";
         return 1;

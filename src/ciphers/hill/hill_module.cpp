@@ -1,5 +1,6 @@
 #include "cipher_module_api.h"
 
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 
 #include <algorithm>
@@ -18,7 +19,16 @@ constexpr std::size_t kLegacyHeaderSize = 12;
 constexpr std::size_t kDigestSize = 32;
 constexpr std::size_t kHeaderSize = kLegacyHeaderSize + kDigestSize;
 constexpr std::array<std::uint8_t, 4> kLegacyMagic{'H', 'I', 'L', '1'};
-constexpr std::array<std::uint8_t, 4> kMagic{'H', 'I', 'L', '2'};
+constexpr std::array<std::uint8_t, 4> kPreviousMagic{'H', 'I', 'L', '2'};
+constexpr std::array<std::uint8_t, 4> kMagic{'H', 'I', 'L', '3'};
+
+struct MemoryWiper {
+    void* data;
+    std::size_t size;
+    ~MemoryWiper() {
+        if (data != nullptr && size != 0) OPENSSL_cleanse(data, size);
+    }
+};
 
 int inverse_mod_256(int value, int& inverse) {
     value %= 256;
@@ -74,7 +84,7 @@ int allocate_copy(const std::uint8_t* data, std::size_t size, std::uint8_t** out
     return 1;
 }
 
-int generate_keys(const std::uint8_t* parameters,
+int generate_keys_alloc(const std::uint8_t* parameters,
                   std::size_t parameters_size,
                   std::uint8_t** encryption_key,
                   std::size_t* encryption_key_size,
@@ -96,6 +106,8 @@ int generate_keys(const std::uint8_t* parameters,
         std::random_device random;
         std::array<std::uint8_t, kKeySize> key{};
         std::array<std::uint8_t, kKeySize> inverse{};
+        MemoryWiper key_wiper{key.data(), key.size()};
+        MemoryWiper inverse_wiper{inverse.data(), inverse.size()};
         int determinant_inverse = 0;
 
         do {
@@ -128,7 +140,7 @@ int generate_keys(const std::uint8_t* parameters,
     }
 }
 
-int encrypt(const std::uint8_t* key,
+int encrypt_alloc(const std::uint8_t* key,
             std::size_t key_size,
             const std::uint8_t* input,
             std::size_t input_size,
@@ -148,7 +160,7 @@ int encrypt(const std::uint8_t* key,
     *output = nullptr;
     *output_size = 0;
 
-    const std::size_t padding = input_size % 2;
+    const std::size_t padding = 2 - input_size % 2;
     if (input_size > std::numeric_limits<std::size_t>::max() - padding) {
         return 0;
     }
@@ -175,8 +187,12 @@ int encrypt(const std::uint8_t* key,
     std::copy(digest.begin(), digest.end(), result + kLegacyHeaderSize);
 
     for (std::size_t offset = 0; offset < padded_size; offset += 2) {
-        const int first = offset < input_size ? input[offset] : 0;
-        const int second = offset + 1 < input_size ? input[offset + 1] : 0;
+        const int first = offset < input_size
+            ? input[offset]
+            : static_cast<int>(padding);
+        const int second = offset + 1 < input_size
+            ? input[offset + 1]
+            : static_cast<int>(padding);
         result[kHeaderSize + offset] = mod_256(first * key[0] + second * key[2]);
         result[kHeaderSize + offset + 1] = mod_256(first * key[1] + second * key[3]);
     }
@@ -186,7 +202,7 @@ int encrypt(const std::uint8_t* key,
     return 1;
 }
 
-int decrypt(const std::uint8_t* key,
+int decrypt_alloc(const std::uint8_t* key,
             std::size_t key_size,
             const std::uint8_t* input,
             std::size_t input_size,
@@ -205,7 +221,9 @@ int decrypt(const std::uint8_t* key,
     *output = nullptr;
     *output_size = 0;
 
-    const bool has_digest = std::equal(kMagic.begin(), kMagic.end(), input);
+    const bool is_current = std::equal(kMagic.begin(), kMagic.end(), input);
+    const bool has_digest = is_current ||
+        std::equal(kPreviousMagic.begin(), kPreviousMagic.end(), input);
     if (!has_digest && !std::equal(kLegacyMagic.begin(), kLegacyMagic.end(), input)) {
         return 0;
     }
@@ -219,8 +237,10 @@ int decrypt(const std::uint8_t* key,
         original_size |= static_cast<std::uint64_t>(input[4 + i]) << (8 * i);
     }
     const std::size_t encrypted_size = input_size - header_size;
+    const std::uint64_t expected_padding = is_current ? 2 - original_size % 2
+                                                       : original_size % 2;
     if ((encrypted_size % 2) != 0 || original_size > encrypted_size ||
-        encrypted_size - original_size > 1 ||
+        encrypted_size - original_size != expected_padding ||
         original_size > std::numeric_limits<std::size_t>::max()) {
         return 0;
     }
@@ -239,9 +259,19 @@ int decrypt(const std::uint8_t* key,
         const std::size_t position = offset;
         if (position < plaintext_size) {
             plaintext[position] = mod_256(first * key[0] + second * key[2]);
+        } else if (is_current && mod_256(first * key[0] + second * key[2]) !=
+                   expected_padding) {
+            if (plaintext_size != 0) OPENSSL_cleanse(plaintext, plaintext_size);
+            std::free(plaintext);
+            return 0;
         }
         if (position + 1 < plaintext_size) {
             plaintext[position + 1] = mod_256(first * key[1] + second * key[3]);
+        } else if (is_current && mod_256(first * key[1] + second * key[3]) !=
+                   expected_padding) {
+            if (plaintext_size != 0) OPENSSL_cleanse(plaintext, plaintext_size);
+            std::free(plaintext);
+            return 0;
         }
     }
 
@@ -249,6 +279,7 @@ int decrypt(const std::uint8_t* key,
         std::array<std::uint8_t, kDigestSize> digest{};
         if (!calculate_digest(plaintext, plaintext_size, digest) ||
             !std::equal(digest.begin(), digest.end(), input + kLegacyHeaderSize)) {
+            if (plaintext_size != 0) OPENSSL_cleanse(plaintext, plaintext_size);
             std::free(plaintext);
             return 0;
         }
@@ -259,25 +290,110 @@ int decrypt(const std::uint8_t* key,
     return 1;
 }
 
-const char* get_name() {
-    return "Шифр Хилла (байтовый вариант)";
-}
-
-void free_buffer(std::uint8_t* buffer) {
+void free_buffer_impl(std::uint8_t* buffer, std::size_t buffer_size) {
+    if (buffer != nullptr) OPENSSL_cleanse(buffer, buffer_size);
     std::free(buffer);
 }
 
 const CipherModuleApi kApi{
     CIPHER_MODULE_ABI_VERSION,
     sizeof(CipherModuleApi),
-    get_name,
+    ::get_algorithm_info,
+    ::get_output_size,
     generate_keys,
     encrypt,
     decrypt,
     free_buffer,
 };
 
+std::size_t output_size(std::size_t input_size, int operation_type) {
+    if (operation_type == CIPHER_OPERATION_ENCRYPT) {
+        const std::size_t padding = 2 - input_size % 2;
+        if (input_size > std::numeric_limits<std::size_t>::max() - padding - kHeaderSize) {
+            return 0;
+        }
+        return kHeaderSize + input_size + padding;
+    }
+    if (operation_type == CIPHER_OPERATION_DECRYPT) return input_size;
+    return 0;
+}
+
+int encrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) {
+    if (output == nullptr || (key.data == nullptr && key.size != 0) ||
+        (input.data == nullptr && input.size != 0)) return 0;
+    const std::size_t required = output_size(input.size, CIPHER_OPERATION_ENCRYPT);
+    if (required == 0 || output->data == nullptr || output->size < required) return 0;
+    std::uint8_t* temporary = nullptr;
+    std::size_t temporary_size = 0;
+    if (encrypt_alloc(key.data, key.size, input.data, input.size,
+                      &temporary, &temporary_size) == 0) return 0;
+    if (temporary_size > output->size) {
+        free_buffer_impl(temporary, temporary_size);
+        return 0;
+    }
+    std::memcpy(output->data, temporary, temporary_size);
+    output->size = temporary_size;
+    free_buffer_impl(temporary, temporary_size);
+    return 1;
+}
+
+int decrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) {
+    if (output == nullptr || (key.data == nullptr && key.size != 0) ||
+        input.data == nullptr) return 0;
+    const std::size_t required = output_size(input.size, CIPHER_OPERATION_DECRYPT);
+    if (required == 0 || (required != 0 && output->data == nullptr) ||
+        output->size < required) return 0;
+    std::uint8_t* temporary = nullptr;
+    std::size_t temporary_size = 0;
+    if (decrypt_alloc(key.data, key.size, input.data, input.size,
+                      &temporary, &temporary_size) == 0) return 0;
+    if (temporary_size > output->size) {
+        free_buffer_impl(temporary, temporary_size);
+        return 0;
+    }
+    if (temporary_size != 0) std::memcpy(output->data, temporary, temporary_size);
+    output->size = temporary_size;
+    free_buffer_impl(temporary, temporary_size);
+    return 1;
+}
+
 }  // Анонимное пространство имён.
+
+extern "C" CIPHER_MODULE_EXPORT const AlgorithmInfo* get_algorithm_info(void) {
+    static const AlgorithmInfo information{
+        CIPHER_MODULE_ABI_VERSION, sizeof(AlgorithmInfo),
+        "Шифр Хилла (байтовый вариант)", 4};
+    return &information;
+}
+
+extern "C" CIPHER_MODULE_EXPORT std::size_t get_output_size(
+    std::size_t input_size, int operation_type) {
+    return output_size(input_size, operation_type);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int generate_keys(
+    const std::uint8_t* parameters, std::size_t parameters_size,
+    std::uint8_t** encryption_key, std::size_t* encryption_key_size,
+    std::uint8_t** decryption_key, std::size_t* decryption_key_size) {
+    return generate_keys_alloc(parameters, parameters_size, encryption_key,
+                               encryption_key_size, decryption_key,
+                               decryption_key_size);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int encrypt(
+    ConstBuffer key, ConstBuffer input, MutBuffer* output) {
+    return encrypt_into(key, input, output);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int decrypt(
+    ConstBuffer key, ConstBuffer input, MutBuffer* output) {
+    return decrypt_into(key, input, output);
+}
+
+extern "C" CIPHER_MODULE_EXPORT void free_buffer(
+    std::uint8_t* buffer, std::size_t buffer_size) {
+    free_buffer_impl(buffer, buffer_size);
+}
 
 extern "C" CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void) {
     return &kApi;

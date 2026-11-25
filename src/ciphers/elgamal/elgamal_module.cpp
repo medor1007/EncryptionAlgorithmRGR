@@ -27,6 +27,13 @@ constexpr std::array<std::uint8_t, 4> kPrivateKeyMagic{'E', 'G', 'S', '1'};
 constexpr std::array<std::uint8_t, 4> kLegacyCiphertextMagic{'E', 'L', 'G', '1'};
 constexpr std::array<std::uint8_t, 4> kCiphertextMagic{'E', 'L', 'G', '2'};
 
+struct VectorWiper {
+    std::vector<std::uint8_t>& bytes;
+    ~VectorWiper() {
+        if (!bytes.empty()) OPENSSL_cleanse(bytes.data(), bytes.size());
+    }
+};
+
 struct BnDeleter {
     void operator()(BIGNUM* value) const { BN_clear_free(value); }
 };
@@ -182,6 +189,7 @@ int generate_keys_impl(const std::uint8_t* parameters,
 
     std::vector<std::uint8_t> public_key(kPublicKeyMagic.begin(), kPublicKeyMagic.end());
     std::vector<std::uint8_t> private_key(kPrivateKeyMagic.begin(), kPrivateKeyMagic.end());
+    VectorWiper private_key_wiper{private_key};
     if (!append_bn(public_key, p.get()) || !append_bn(public_key, generator.get()) ||
         !append_bn(public_key, public_value.get()) || !append_bn(private_key, p.get()) ||
         !append_bn(private_key, generator.get()) || !append_bn(private_key, private_exponent.get()) ||
@@ -333,6 +341,7 @@ int decrypt_impl(const std::uint8_t* key,
     }
 
     std::vector<std::uint8_t> plaintext(plaintext_size);
+    VectorWiper plaintext_wiper{plaintext};
     for (std::size_t block = 0; block < block_count; ++block) {
         const std::size_t input_offset = header_size + block * kCiphertextBlockBytes;
         first = read_bn(input, input_size, input_offset);
@@ -384,12 +393,12 @@ int decrypt_impl(const std::uint8_t* key,
     return 1;
 }
 
-int generate_keys(const std::uint8_t* parameters,
-                  std::size_t parameters_size,
-                  std::uint8_t** encryption_key,
-                  std::size_t* encryption_key_size,
-                  std::uint8_t** decryption_key,
-                  std::size_t* decryption_key_size) noexcept {
+int generate_keys_alloc(const std::uint8_t* parameters,
+                        std::size_t parameters_size,
+                        std::uint8_t** encryption_key,
+                        std::size_t* encryption_key_size,
+                        std::uint8_t** decryption_key,
+                        std::size_t* decryption_key_size) noexcept {
     try {
         return generate_keys_impl(parameters, parameters_size, encryption_key,
                                   encryption_key_size, decryption_key,
@@ -399,12 +408,12 @@ int generate_keys(const std::uint8_t* parameters,
     }
 }
 
-int encrypt(const std::uint8_t* key,
-            std::size_t key_size,
-            const std::uint8_t* input,
-            std::size_t input_size,
-            std::uint8_t** output,
-            std::size_t* output_size) noexcept {
+int encrypt_alloc(const std::uint8_t* key,
+                  std::size_t key_size,
+                  const std::uint8_t* input,
+                  std::size_t input_size,
+                  std::uint8_t** output,
+                  std::size_t* output_size) noexcept {
     try {
         return encrypt_impl(key, key_size, input, input_size, output, output_size);
     } catch (...) {
@@ -412,12 +421,12 @@ int encrypt(const std::uint8_t* key,
     }
 }
 
-int decrypt(const std::uint8_t* key,
-            std::size_t key_size,
-            const std::uint8_t* input,
-            std::size_t input_size,
-            std::uint8_t** output,
-            std::size_t* output_size) noexcept {
+int decrypt_alloc(const std::uint8_t* key,
+                  std::size_t key_size,
+                  const std::uint8_t* input,
+                  std::size_t input_size,
+                  std::uint8_t** output,
+                  std::size_t* output_size) noexcept {
     try {
         return decrypt_impl(key, key_size, input, input_size, output, output_size);
     } catch (...) {
@@ -425,25 +434,109 @@ int decrypt(const std::uint8_t* key,
     }
 }
 
-const char* get_name() {
-    return "Шифр Эль-Гамаля";
-}
-
-void free_buffer(std::uint8_t* buffer) noexcept {
+void free_buffer_impl(std::uint8_t* buffer, std::size_t buffer_size) noexcept {
+    if (buffer != nullptr) OPENSSL_cleanse(buffer, buffer_size);
     std::free(buffer);
 }
 
 const CipherModuleApi kApi{
     CIPHER_MODULE_ABI_VERSION,
     sizeof(CipherModuleApi),
-    get_name,
-    generate_keys,
-    encrypt,
-    decrypt,
-    free_buffer,
+    ::get_algorithm_info,
+    ::get_output_size,
+    ::generate_keys,
+    ::encrypt,
+    ::decrypt,
+    ::free_buffer,
 };
 
+std::size_t output_size(std::size_t input_size, int operation_type) {
+    if (operation_type == CIPHER_OPERATION_ENCRYPT) {
+        const std::size_t block_count = input_size / kPlaintextBlockBytes +
+            (input_size % kPlaintextBlockBytes != 0 ? 1 : 0);
+        if (block_count > (std::numeric_limits<std::size_t>::max() -
+                           kContainerHeaderBytes) / kCiphertextBlockBytes) return 0;
+        return kContainerHeaderBytes + block_count * kCiphertextBlockBytes;
+    }
+    if (operation_type == CIPHER_OPERATION_DECRYPT) return input_size;
+    return 0;
+}
+
+int encrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept {
+    if (output == nullptr || (key.data == nullptr && key.size != 0) ||
+        (input.data == nullptr && input.size != 0)) return 0;
+    const std::size_t required = output_size(input.size, CIPHER_OPERATION_ENCRYPT);
+    if (required == 0 || output->data == nullptr || output->size < required) return 0;
+    std::uint8_t* temporary = nullptr;
+    std::size_t temporary_size = 0;
+    if (encrypt_alloc(key.data, key.size, input.data, input.size,
+                      &temporary, &temporary_size) == 0) return 0;
+    if (temporary_size > output->size) {
+        free_buffer_impl(temporary, temporary_size);
+        return 0;
+    }
+    std::memcpy(output->data, temporary, temporary_size);
+    output->size = temporary_size;
+    free_buffer_impl(temporary, temporary_size);
+    return 1;
+}
+
+int decrypt_into(ConstBuffer key, ConstBuffer input, MutBuffer* output) noexcept {
+    if (output == nullptr || (key.data == nullptr && key.size != 0) ||
+        (input.data == nullptr && input.size != 0)) return 0;
+    const std::size_t required = output_size(input.size, CIPHER_OPERATION_DECRYPT);
+    if (required != 0 && output->data == nullptr) return 0;
+    if (output->size < required) return 0;
+    std::uint8_t* temporary = nullptr;
+    std::size_t temporary_size = 0;
+    if (decrypt_alloc(key.data, key.size, input.data, input.size,
+                      &temporary, &temporary_size) == 0) return 0;
+    if (temporary_size > output->size) {
+        free_buffer_impl(temporary, temporary_size);
+        return 0;
+    }
+    if (temporary_size != 0) std::memcpy(output->data, temporary, temporary_size);
+    output->size = temporary_size;
+    free_buffer_impl(temporary, temporary_size);
+    return 1;
+}
+
 }  // Анонимное пространство имён.
+
+extern "C" CIPHER_MODULE_EXPORT const AlgorithmInfo* get_algorithm_info(void) {
+    static const AlgorithmInfo information{
+        CIPHER_MODULE_ABI_VERSION, sizeof(AlgorithmInfo), "Шифр Эль-Гамаля", kKeyBytes};
+    return &information;
+}
+
+extern "C" CIPHER_MODULE_EXPORT std::size_t get_output_size(
+    std::size_t input_size, int operation_type) {
+    return output_size(input_size, operation_type);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int generate_keys(
+    const std::uint8_t* parameters, std::size_t parameters_size,
+    std::uint8_t** encryption_key, std::size_t* encryption_key_size,
+    std::uint8_t** decryption_key, std::size_t* decryption_key_size) {
+    return generate_keys_alloc(parameters, parameters_size, encryption_key,
+                               encryption_key_size, decryption_key,
+                               decryption_key_size);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int encrypt(
+    ConstBuffer key, ConstBuffer input, MutBuffer* output) {
+    return encrypt_into(key, input, output);
+}
+
+extern "C" CIPHER_MODULE_EXPORT int decrypt(
+    ConstBuffer key, ConstBuffer input, MutBuffer* output) {
+    return decrypt_into(key, input, output);
+}
+
+extern "C" CIPHER_MODULE_EXPORT void free_buffer(
+    std::uint8_t* buffer, std::size_t buffer_size) {
+    free_buffer_impl(buffer, buffer_size);
+}
 
 extern "C" CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void) {
     return &kApi;

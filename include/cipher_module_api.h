@@ -18,35 +18,63 @@
 extern "C" {
 #endif
 
-#define CIPHER_MODULE_ABI_VERSION 1u
+#define CIPHER_MODULE_ABI_VERSION 2u
+
+typedef struct ConstBuffer {
+    const uint8_t* data;
+    size_t size;
+} ConstBuffer;
+
+typedef struct MutBuffer {
+    uint8_t* data;
+    size_t size;
+} MutBuffer;
+
+typedef struct AlgorithmInfo {
+    uint32_t abi_version;
+    size_t struct_size;
+    const char* algorithm_name;
+    size_t key_size;
+} AlgorithmInfo;
+
+enum CipherOperation {
+    CIPHER_OPERATION_ENCRYPT = 1,
+    CIPHER_OPERATION_DECRYPT = 2,
+};
 
 typedef struct CipherModuleApi {
     uint32_t abi_version;
     size_t struct_size;
-    const char* (*get_name)(void);
+    const AlgorithmInfo* (*get_algorithm_info)(void);
+    size_t (*get_output_size)(size_t input_size, int operation_type);
     int (*generate_keys)(const uint8_t* parameters,
                          size_t parameters_size,
                          uint8_t** encryption_key,
                          size_t* encryption_key_size,
                          uint8_t** decryption_key,
                          size_t* decryption_key_size);
-    int (*encrypt)(const uint8_t* key,
-                   size_t key_size,
-                   const uint8_t* input,
-                   size_t input_size,
-                   uint8_t** output,
-                   size_t* output_size);
-    int (*decrypt)(const uint8_t* key,
-                   size_t key_size,
-                   const uint8_t* input,
-                   size_t input_size,
-                   uint8_t** output,
-                   size_t* output_size);
-    void (*free_buffer)(uint8_t* buffer);
+    int (*encrypt)(ConstBuffer key, ConstBuffer input, MutBuffer* output);
+    int (*decrypt)(ConstBuffer key, ConstBuffer input, MutBuffer* output);
+    void (*free_buffer)(uint8_t* buffer, size_t buffer_size);
 } CipherModuleApi;
 
 typedef const CipherModuleApi* (*GetCipherModuleApi)(void);
 
+CIPHER_MODULE_EXPORT const AlgorithmInfo* get_algorithm_info(void);
+CIPHER_MODULE_EXPORT size_t get_output_size(size_t input_size, int operation_type);
+CIPHER_MODULE_EXPORT int generate_keys(const uint8_t* parameters,
+                                      size_t parameters_size,
+                                      uint8_t** encryption_key,
+                                      size_t* encryption_key_size,
+                                      uint8_t** decryption_key,
+                                      size_t* decryption_key_size);
+CIPHER_MODULE_EXPORT int encrypt(ConstBuffer key,
+                                 ConstBuffer input,
+                                 MutBuffer* output);
+CIPHER_MODULE_EXPORT int decrypt(ConstBuffer key,
+                                 ConstBuffer input,
+                                 MutBuffer* output);
+CIPHER_MODULE_EXPORT void free_buffer(uint8_t* buffer, size_t buffer_size);
 CIPHER_MODULE_EXPORT const CipherModuleApi* get_cipher_module_api(void);
 
 #ifdef __cplusplus
