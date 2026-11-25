@@ -70,7 +70,7 @@ int write_stream_callback(void* context, const std::uint8_t* buffer,
     return size == 0 || std::fwrite(buffer, 1, size, stream->output) == size;
 }
 
-bool read_key_stream(FILE* source, SecureBytes& data) {
+bool read_key_stream(FILE* source, SecureBytes& data, std::size_t maximum_size) {
     std::array<std::uint8_t, 4096> buffer{};
     struct BufferWiper {
         std::array<std::uint8_t, 4096>& bytes;
@@ -78,15 +78,16 @@ bool read_key_stream(FILE* source, SecureBytes& data) {
     } wiper{buffer};
     while (true) {
         const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), source);
+        if (count > maximum_size - data.size()) return false;
         data.insert(data.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(count));
         if (count < buffer.size()) return std::ferror(source) == 0;
     }
 }
 
-bool read_file(const std::string& path, SecureBytes& data) {
+bool read_file(const std::string& path, SecureBytes& data, std::size_t maximum_size) {
     FilePtr file(std::fopen(path.c_str(), "rb"));
     if (!file || std::setvbuf(file.get(), nullptr, _IONBF, 0) != 0) return false;
-    return read_key_stream(file.get(), data);
+    return read_key_stream(file.get(), data, maximum_size);
 }
 
 FilePtr create_private_output(const std::filesystem::path& path) {
@@ -415,9 +416,16 @@ int execute_cli(const CommandLineOptions& options, const char* executable_path) 
     } else {
         SecureBytes key_record;
         VectorCleanser key_record_cleanser{key_record};
+        const std::size_t key_size = module.api()->get_algorithm_info()->key_size;
+        constexpr std::size_t KEY_HEADER_SIZE = 24;
+        if (key_size > (std::numeric_limits<std::size_t>::max() - KEY_HEADER_SIZE) / 2) {
+            std::cerr << "Библиотека указала недопустимую длину ключа.\n";
+            return 1;
+        }
+        const std::size_t maximum_key_size = KEY_HEADER_SIZE + 2 * key_size;
         const bool key_read = options.key_path == "-"
-            ? read_key_stream(stdin, key_record)
-            : read_file(options.key_path, key_record);
+            ? read_key_stream(stdin, key_record, maximum_key_size)
+            : read_file(options.key_path, key_record, maximum_key_size);
         if (!key_read ||
             !select_key(key_record, options.mode, encryption_key)) {
             std::cerr << "Не удалось прочитать ключ из «" << options.key_path << "».\n";
