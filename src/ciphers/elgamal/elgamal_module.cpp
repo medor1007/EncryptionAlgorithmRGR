@@ -125,12 +125,26 @@ bool parse_key(const std::uint8_t* key,
         (magic == PUBLIC_KEY_MAGIC && BN_is_one(third.get()))) {
         return false;
     }
+    // Формат ключа использует только группу RFC 3526 с генератором 2.
+    BnPtr expected_p(BN_get_rfc3526_prime_2048(nullptr));
+    if (!expected_p || BN_cmp(p.get(), expected_p.get()) != 0 || !BN_is_word(g.get(), 2)) {
+        return false;
+    }
     BnPtr p_minus_one = make_bn();
     if (!p_minus_one || BN_copy(p_minus_one.get(), p.get()) == nullptr ||
         BN_sub_word(p_minus_one.get(), 1) != 1 ||
         BN_cmp(g.get(), p_minus_one.get()) >= 0 ||
         BN_cmp(third.get(), p_minus_one.get()) >= 0) {
         return false;
+    }
+    if (magic == PUBLIC_KEY_MAGIC) {
+        BnPtr subgroup_order(BN_dup(p_minus_one.get()));
+        BnPtr check = make_bn();
+        BnContextPtr context = make_context();
+        if (!subgroup_order || !check || !context ||
+            BN_rshift1(subgroup_order.get(), subgroup_order.get()) != 1 ||
+            BN_mod_exp(check.get(), third.get(), subgroup_order.get(), p.get(), context.get()) != 1 ||
+            !BN_is_one(check.get())) return false;
     }
     return true;
 }
@@ -153,7 +167,6 @@ std::uint64_t decode_length(const std::uint8_t* source) {
     return length;
 }
 
-// Создание открытого и закрытого ключей Эль-Гамаля.
 int generate_keys_impl(const std::uint8_t* parameters,
                        std::size_t parameters_size,
                        std::uint8_t** encryption_key,
@@ -231,7 +244,6 @@ int generate_keys_impl(const std::uint8_t* parameters,
     return 1;
 }
 
-// Преобразование блоков в пары чисел (a, b) по модулю p.
 int encrypt_impl(const std::uint8_t* key,
                  std::size_t key_size,
                  const std::uint8_t* input,
@@ -325,7 +337,6 @@ int encrypt_impl(const std::uint8_t* key,
     return 1;
 }
 
-// Восстановление блоков с помощью закрытого показателя.
 int decrypt_impl(const std::uint8_t* key,
                  std::size_t key_size,
                  const std::uint8_t* input,
@@ -552,7 +563,6 @@ private:
     std::size_t buffered_ = 0;
 };
 
-// Потоковая обработка: в памяти находится только текущий блок.
 int encrypt_stream_impl(ConstBuffer key,
                         std::uint64_t input_size,
                         const std::uint8_t* input_digest,
@@ -615,7 +625,6 @@ int encrypt_stream_impl(ConstBuffer key,
     return reader.at_end() && writer.finish() ? 1 : 0;
 }
 
-// Чтение пар чисел, восстановление данных и проверка целостности.
 int decrypt_stream_impl(ConstBuffer key,
                         CipherReadCallback read_callback,
                         CipherWriteCallback write_callback,

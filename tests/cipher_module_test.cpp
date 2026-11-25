@@ -367,6 +367,26 @@ bool check_module(const std::string& library_path) {
         }
     }
 
+    if (!is_hill) {
+        for (int field = 0; field < 3; ++field) {
+            auto invalid_group_key = public_key;
+            if (field == 0) {
+                std::fill(invalid_group_key.begin() + 4, invalid_group_key.begin() + 260, 0xff);
+                invalid_group_key[259] = 0xfe;
+            } else {
+                const std::size_t offset = field == 1 ? 260 : 516;
+                std::fill_n(invalid_group_key.begin() + static_cast<std::ptrdiff_t>(offset), 256, 0);
+                invalid_group_key[offset + 255] = field == 1 ? 3 : 1;
+            }
+            ModuleBuffer invalid_group_result{api};
+            if (transform(api, true, invalid_group_key, binary_data.data(), binary_data.size(),
+                           invalid_group_result)) {
+                std::cerr << "Приняты некорректные параметры группы Эль-Гамаля.\n";
+                return false;
+            }
+        }
+    }
+
     const std::vector<std::uint8_t> invalid_ciphertext{0x00, 0x01, 0x02};
     ModuleBuffer invalid_result{api};
     if (transform(api, false, invalid_key, invalid_ciphertext.data(),
